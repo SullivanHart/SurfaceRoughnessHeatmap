@@ -92,6 +92,17 @@ def analyze_bytes(
         tmp_path.unlink(missing_ok=True)
 
 
+@st.cache_data(show_spinner=False)
+def get_cached_svr_map(
+    grid_filtered: np.ndarray,
+    valid_filled: np.ndarray,
+    grid_mm: float,
+    svr_points: int,
+    svr_span_mm: float,
+) -> np.ndarray:
+    return svr_map(grid_filtered, valid_filled, grid_mm, svr_points, svr_span_mm)
+
+
 def show_result(
     result: RoughnessResult,
     file_name: str,
@@ -99,10 +110,18 @@ def show_result(
     robust_contrast: bool,
     custom_max: float,
 ) -> None:
+    svr_grid = get_cached_svr_map(
+        result.grid.filtered,
+        result.grid.valid_filled,
+        result.config.grid_mm,
+        result.config.svr_points,
+        result.config.svr_span_mm,
+    )
+
     left, right = st.columns([3, 1])
     with left:
         st.plotly_chart(
-            build_figure(result, color_scale, robust_contrast, custom_max),
+            build_figure(result, svr_grid, color_scale, robust_contrast, custom_max),
             width="stretch",
             config={"displaylogo": False},
         )
@@ -118,30 +137,27 @@ def show_result(
 
 def build_figure(
     result: RoughnessResult,
+    grid: np.ndarray,
     color_scale: str,
     robust_contrast: bool,
     custom_max: float,
 ) -> go.Figure:
     import numpy as np
 
-    grid = svr_map(
-        result.grid.filtered,
-        result.grid.valid_filled,
-        result.config.grid_mm,
-        result.config.svr_points,
-        result.config.svr_span_mm,
-    )
     origin_x, origin_y, pitch = result.grid.origin
+
+    valid_vals = grid[~np.isnan(grid)] if np.any(~np.isnan(grid)) else np.array([0.0])
 
     if custom_max > 0:
         zmin = 0.0
         zmax = custom_max
-    elif robust_contrast and np.any(~np.isnan(grid)):
-        zmin = 0.0
-        zmax = float(np.nanpercentile(grid, 99.5))
+    elif robust_contrast and len(valid_vals) > 0:
+        zmin = float(np.percentile(valid_vals, 1.0))
+        zmax = float(np.percentile(valid_vals, 99.0))
     else:
-        zmin = None
-        zmax = None
+        # Full range of surface values (2nd to 99.8th percentile to exclude extreme 0.2% edge artifacts)
+        zmin = float(np.percentile(valid_vals, 0.5)) if len(valid_vals) > 0 else None
+        zmax = float(np.percentile(valid_vals, 99.8)) if len(valid_vals) > 0 else None
 
     trace = go.Heatmap(
         z=grid,
