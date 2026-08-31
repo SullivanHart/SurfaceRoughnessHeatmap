@@ -16,32 +16,32 @@ from svr_roughness import (
 
 SUPPORTED_TYPES = ["ply", "pcd", "stl", "obj", "csv", "tsv", "xyz", "txt", "npy", "npz"]
 COLOR_SCALES = ["Jet", "Turbo", "Viridis", "Plasma", "Inferno", "Rainbow"]
-COLOR_RANGE_MODES = ["Auto (99.5th Percentile)", "Full Range (0 - Max)", "Custom Cap"]
 
 
 st.set_page_config(
-    page_title="SVR Roughness Native Heatmap",
-    page_icon="📐",
+    page_title="SVR Roughness Heatmap Analyzer",
     layout="wide",
 )
 
 
 def main() -> None:
-    st.title("SurfInspect SVR Roughness Heatmap")
-    st.caption("High-performance surface roughness metrology computed directly by the SurfInspect Native C++ engine (PC_svr2).")
+    st.title("SurfInspect SVR Roughness Heatmap Analyzer")
+    st.caption("Areal surface roughness metrology powered directly by the SurfInspect Native C++ engine.")
 
     with st.sidebar:
-        uploaded_file = st.file_uploader("Upload a scan file", type=SUPPORTED_TYPES)
-        st.subheader("Analysis Parameters")
-        grid_mm = st.number_input("Grid spacing (mm)", min_value=0.001, value=0.30, step=0.05)
-        short_cutoff_mm = st.number_input("Short cutoff (mm)", min_value=0.0, value=1.0, step=0.1)
-        long_cutoff_mm = st.number_input("Long cutoff (mm)", min_value=0.0, value=25.0, step=1.0)
-        gaussian_mesh = st.checkbox("Gaussian Filtering (Form Removal)", value=True, help="Applies Gaussian bandpass filter (short/long wavelength cutoff) to isolate surface micro-roughness from macro-form shape.")
-        
-        st.subheader("Display Settings (Instant)")
-        color_scale = st.selectbox("Color scale", COLOR_SCALES, index=0)
-        robust_contrast = st.checkbox("Robust Contrast Stretch (99.5th Percentile)", value=True, help="Clips extreme outlier peaks so micro-roughness surface details pop out clearly instead of being squashed into blue.")
-        custom_max = st.number_input("Custom Colorbar Max (µm, 0 = Auto)", min_value=0.0, value=0.0, step=5.0)
+        uploaded_file = st.file_uploader("Upload Point Cloud Scan", type=SUPPORTED_TYPES)
+
+        st.subheader("ISO 25178 Analysis Parameters")
+        grid_mm = st.number_input("Grid Spacing (mm)", min_value=0.001, value=0.30, step=0.05, help="Spatial resolution for 3D point cloud grid sampling.")
+        short_cutoff_mm = st.number_input("Short Cutoff λs (mm)", min_value=0.0, value=1.0, step=0.1, help="High-frequency cutoff wavelength to filter acquisition noise.")
+        long_cutoff_mm = st.number_input("Long Cutoff λc (mm)", min_value=0.0, value=25.0, step=1.0, help="Low-frequency cutoff wavelength to filter macro-form shape and tilt.")
+        gaussian_mesh = st.checkbox("Gaussian Form Removal", value=True, help="Applies ISO 16610-21 Gaussian bandpass filtering.")
+
+        st.subheader("Display Controls")
+        color_scale = st.selectbox("Color Palette", COLOR_SCALES, index=0)
+        robust_contrast = st.checkbox("Contrast Stretch (99.5th Percentile)", value=True, help="Clips boundary spike artifacts so micro-surface details remain visible.")
+        smooth_display = st.checkbox("Bilinear Surface Smoothing", value=False, help="Applies Plotly WebGL bilinear interpolation without altering measurement data.")
+        custom_max = st.number_input("Custom Colorbar Max (µm)", min_value=0.0, value=0.0, step=5.0, help="Set a fixed maximum µm scale for multi-sample comparisons. Set to 0 for automatic scaling.")
 
     if uploaded_file is None:
         st.info("Upload a point cloud scan file (.pcd, .ply, .stl, .csv) to calculate roughness using the native C++ engine.")
@@ -62,7 +62,7 @@ def main() -> None:
         st.error(f"Could not calculate roughness: {exc}")
         return
 
-    show_result(result, uploaded_file.name, color_scale, robust_contrast, custom_max)
+    show_result(result, uploaded_file.name, smooth_display, color_scale, robust_contrast, custom_max)
 
 
 @st.cache_data(show_spinner=False)
@@ -106,6 +106,7 @@ def get_cached_svr_map(
 def show_result(
     result: RoughnessResult,
     file_name: str,
+    smooth_display: bool,
     color_scale: str,
     robust_contrast: bool,
     custom_max: float,
@@ -121,7 +122,7 @@ def show_result(
     left, right = st.columns([3, 1])
     with left:
         st.plotly_chart(
-            build_figure(result, svr_grid, color_scale, robust_contrast, custom_max),
+            build_figure(result, svr_grid, smooth_display, color_scale, robust_contrast, custom_max),
             width="stretch",
             config={"displaylogo": False},
         )
@@ -138,6 +139,7 @@ def show_result(
 def build_figure(
     result: RoughnessResult,
     grid: np.ndarray,
+    smooth_display: bool,
     color_scale: str,
     robust_contrast: bool,
     custom_max: float,
@@ -159,6 +161,8 @@ def build_figure(
         zmin = float(np.percentile(valid_vals, 0.5)) if len(valid_vals) > 0 else None
         zmax = float(np.percentile(valid_vals, 99.8)) if len(valid_vals) > 0 else None
 
+    zsmooth = "best" if smooth_display else False
+
     trace = go.Heatmap(
         z=grid,
         x=[origin_x + index * pitch for index in range(grid.shape[1])],
@@ -166,6 +170,7 @@ def build_figure(
         colorscale=color_scale,
         zmin=zmin,
         zmax=zmax,
+        zsmooth=zsmooth,
         colorbar={"title": "Local Svr (µm)"},
         hovertemplate="X=%{x:.3f} mm<br>Y=%{y:.3f} mm<br>Local Svr=%{z:.3f} µm<extra></extra>",
     )
