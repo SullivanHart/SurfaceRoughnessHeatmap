@@ -37,6 +37,8 @@ def main() -> None:
         short_cutoff_mm = st.number_input("Short cutoff (mm)", min_value=0.0, value=1.0, step=0.1)
         long_cutoff_mm = st.number_input("Long cutoff (mm)", min_value=0.0, value=25.0, step=1.0)
         gaussian_mesh = st.checkbox("Gaussian Filtering (Form Removal)", value=True, help="Applies Gaussian bandpass filter (short/long wavelength cutoff) to isolate surface micro-roughness from macro-form shape.")
+        
+        st.subheader("Display Settings (Instant)")
         color_scale = st.selectbox("Color scale", COLOR_SCALES, index=0)
         robust_contrast = st.checkbox("Robust Contrast Stretch (99.5th Percentile)", value=True, help="Clips extreme outlier peaks so micro-roughness surface details pop out clearly instead of being squashed into blue.")
         custom_max = st.number_input("Custom Colorbar Max (µm, 0 = Auto)", min_value=0.0, value=0.0, step=5.0)
@@ -46,23 +48,16 @@ def main() -> None:
         return
 
     try:
-        progress_bar = st.progress(0, text="Preparing C++ engine...")
-
-        def update_progress(label: str, value: float) -> None:
-            progress_bar.progress(value, text=f"{label}...")
-
+        file_bytes = uploaded_file.getvalue()
         with st.spinner("Calculating SVR roughness via native C++ core..."):
-            result = analyze_uploaded_file(
-                uploaded_file,
-                RoughnessConfig(
-                    grid_mm=grid_mm,
-                    short_cutoff_mm=short_cutoff_mm,
-                    long_cutoff_mm=long_cutoff_mm,
-                    gaussian_mesh=gaussian_mesh,
-                ),
-                progress=update_progress,
+            result = analyze_bytes(
+                file_bytes,
+                uploaded_file.name,
+                grid_mm,
+                short_cutoff_mm,
+                long_cutoff_mm,
+                gaussian_mesh,
             )
-        progress_bar.empty()
     except Exception as exc:
         st.error(f"Could not calculate roughness: {exc}")
         return
@@ -70,15 +65,29 @@ def main() -> None:
     show_result(result, uploaded_file.name, color_scale, robust_contrast, custom_max)
 
 
-def analyze_uploaded_file(uploaded_file, config: RoughnessConfig, progress=None) -> RoughnessResult:
-    suffix = Path(uploaded_file.name).suffix.lower()
+@st.cache_data(show_spinner=False)
+def analyze_bytes(
+    file_bytes: bytes,
+    file_name: str,
+    grid_mm: float,
+    short_cutoff_mm: float,
+    long_cutoff_mm: float,
+    gaussian_mesh: bool,
+) -> RoughnessResult:
+    suffix = Path(file_name).suffix.lower()
 
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-        tmp.write(uploaded_file.getbuffer())
+        tmp.write(file_bytes)
         tmp_path = Path(tmp.name)
 
     try:
-        return analyze_file(tmp_path, config=config, progress=progress)
+        config = RoughnessConfig(
+            grid_mm=grid_mm,
+            short_cutoff_mm=short_cutoff_mm,
+            long_cutoff_mm=long_cutoff_mm,
+            gaussian_mesh=gaussian_mesh,
+        )
+        return analyze_file(tmp_path, config=config)
     finally:
         tmp_path.unlink(missing_ok=True)
 
@@ -124,13 +133,15 @@ def build_figure(
     )
     origin_x, origin_y, pitch = result.grid.origin
 
-    zmin = 0.0
     if custom_max > 0:
+        zmin = 0.0
         zmax = custom_max
     elif robust_contrast and np.any(~np.isnan(grid)):
+        zmin = 0.0
         zmax = float(np.nanpercentile(grid, 99.5))
     else:
-        zmax = float(np.nanmax(grid)) if np.any(~np.isnan(grid)) else None
+        zmin = None
+        zmax = None
 
     trace = go.Heatmap(
         z=grid,
