@@ -15,7 +15,8 @@ from svr_roughness import (
 
 
 SUPPORTED_TYPES = ["ply", "pcd", "stl", "obj", "csv", "tsv", "xyz", "txt", "npy", "npz"]
-COLOR_SCALES = ["Turbo", "Viridis", "Plasma", "Inferno", "Jet"]
+COLOR_SCALES = ["Jet", "Turbo", "Viridis", "Plasma", "Inferno", "Rainbow"]
+COLOR_RANGE_MODES = ["Auto (99.5th Percentile)", "Full Range (0 - Max)", "Custom Cap"]
 
 
 st.set_page_config(
@@ -36,7 +37,9 @@ def main() -> None:
         short_cutoff_mm = st.number_input("Short cutoff (mm)", min_value=0.0, value=1.0, step=0.1)
         long_cutoff_mm = st.number_input("Long cutoff (mm)", min_value=0.0, value=25.0, step=1.0)
         gaussian_mesh = st.checkbox("Gaussian Filtering (Form Removal)", value=True, help="Applies Gaussian bandpass filter (short/long wavelength cutoff) to isolate surface micro-roughness from macro-form shape.")
-        color_scale = st.selectbox("Color scale", COLOR_SCALES)
+        color_scale = st.selectbox("Color scale", COLOR_SCALES, index=0)
+        robust_contrast = st.checkbox("Robust Contrast Stretch (99.5th Percentile)", value=True, help="Clips extreme outlier peaks so micro-roughness surface details pop out clearly instead of being squashed into blue.")
+        custom_max = st.number_input("Custom Colorbar Max (µm, 0 = Auto)", min_value=0.0, value=0.0, step=5.0)
 
     if uploaded_file is None:
         st.info("Upload a point cloud scan file (.pcd, .ply, .stl, .csv) to calculate roughness using the native C++ engine.")
@@ -64,7 +67,7 @@ def main() -> None:
         st.error(f"Could not calculate roughness: {exc}")
         return
 
-    show_result(result, uploaded_file.name, color_scale)
+    show_result(result, uploaded_file.name, color_scale, robust_contrast, custom_max)
 
 
 def analyze_uploaded_file(uploaded_file, config: RoughnessConfig, progress=None) -> RoughnessResult:
@@ -84,11 +87,13 @@ def show_result(
     result: RoughnessResult,
     file_name: str,
     color_scale: str,
+    robust_contrast: bool,
+    custom_max: float,
 ) -> None:
     left, right = st.columns([3, 1])
     with left:
         st.plotly_chart(
-            build_figure(result, color_scale),
+            build_figure(result, color_scale, robust_contrast, custom_max),
             width="stretch",
             config={"displaylogo": False},
         )
@@ -105,7 +110,11 @@ def show_result(
 def build_figure(
     result: RoughnessResult,
     color_scale: str,
+    robust_contrast: bool,
+    custom_max: float,
 ) -> go.Figure:
+    import numpy as np
+
     grid = svr_map(
         result.grid.filtered,
         result.grid.valid_filled,
@@ -114,11 +123,22 @@ def build_figure(
         result.config.svr_span_mm,
     )
     origin_x, origin_y, pitch = result.grid.origin
+
+    zmin = 0.0
+    if custom_max > 0:
+        zmax = custom_max
+    elif robust_contrast and np.any(~np.isnan(grid)):
+        zmax = float(np.nanpercentile(grid, 99.5))
+    else:
+        zmax = float(np.nanmax(grid)) if np.any(~np.isnan(grid)) else None
+
     trace = go.Heatmap(
         z=grid,
         x=[origin_x + index * pitch for index in range(grid.shape[1])],
         y=[origin_y + index * pitch for index in range(grid.shape[0])],
         colorscale=color_scale,
+        zmin=zmin,
+        zmax=zmax,
         colorbar={"title": "Local Svr (µm)"},
         hovertemplate="X=%{x:.3f} mm<br>Y=%{y:.3f} mm<br>Local Svr=%{z:.3f} µm<extra></extra>",
     )
