@@ -1,0 +1,9 @@
+cmake
+build-essential
+libpcl-dev
+libcgal-dev
+libboost-system-dev
+libboost-filesystem-dev
+libtbb-dev
+libeigen3-dev
+
