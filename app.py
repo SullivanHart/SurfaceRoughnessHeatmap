@@ -32,7 +32,7 @@ def main() -> None:
         uploaded_file = st.file_uploader("Upload Point Cloud Scan", type=SUPPORTED_TYPES)
 
         st.subheader("ISO 25178 Analysis Parameters")
-        grid_mm = st.number_input("Grid Spacing (mm)", min_value=0.001, value=0.30, step=0.05, help="Spatial resolution for 3D point cloud grid sampling.")
+        grid_mm = st.number_input("Grid Spacing (mm)", min_value=0.001, value=0.20, step=0.05, help="Spatial resolution for 3D point cloud grid sampling.")
         short_cutoff_mm = st.number_input("Short Cutoff λs (mm)", min_value=0.0, value=1.0, step=0.1, help="High-frequency cutoff wavelength to filter acquisition noise.")
         long_cutoff_mm = st.number_input("Long Cutoff λc (mm)", min_value=0.0, value=25.0, step=1.0, help="Low-frequency cutoff wavelength to filter macro-form shape and tilt.")
         gaussian_mesh = st.checkbox("Gaussian Form Removal", value=True, help="Applies ISO 16610-21 Gaussian bandpass filtering.")
