@@ -19,14 +19,14 @@ COLOR_SCALES = ["Jet", "Turbo", "Viridis", "Plasma", "Inferno", "Rainbow"]
 
 
 st.set_page_config(
-    page_title="SVR Roughness Heatmap Analyzer",
+    page_title="Svr Heatmap",
     layout="wide",
 )
 
 
 def main() -> None:
-    st.title("SurfInspect SVR Roughness Heatmap Analyzer")
-    st.caption("Areal surface roughness metrology powered directly by the SurfInspect Native C++ engine.")
+    st.title("Svr Heatmap")
+    st.caption("Areal surface roughness metrology.")
 
     with st.sidebar:
         uploaded_file = st.file_uploader("Upload Point Cloud Scan", type=SUPPORTED_TYPES)
@@ -44,12 +44,12 @@ def main() -> None:
         custom_max = st.number_input("Custom Colorbar Max (µm)", min_value=0.0, value=0.0, step=5.0, help="Set a fixed maximum µm scale for multi-sample comparisons. Set to 0 for automatic scaling.")
 
     if uploaded_file is None:
-        st.info("Upload a point cloud scan file (.pcd, .ply, .stl, .csv) to calculate roughness using the native C++ engine.")
+        st.info("Upload a point cloud scan file (.pcd, .ply, .stl, .csv) to calculate roughness.")
         return
 
     try:
         file_bytes = uploaded_file.getvalue()
-        with st.spinner("Calculating SVR roughness via native C++ core..."):
+        with st.spinner("Calculating Svr..."):
             result = analyze_bytes(
                 file_bytes,
                 uploaded_file.name,
@@ -182,7 +182,7 @@ def build_figure(
         xaxis_title="Surface X (mm)",
         yaxis_title="Surface Y (mm)",
         yaxis={"scaleanchor": "x", "scaleratio": 1},
-        title="Native C++ Local Svr Heatmap",
+        title="Svr Heatmap",
     )
     return figure
 
