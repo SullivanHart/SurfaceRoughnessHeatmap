@@ -255,60 +255,34 @@ def main() -> None:
     )
 
     if need_analysis:
-        progress_slot = st.empty()
-        timer_slot = st.empty()
-        progress_bar = progress_slot.progress(25, text="Running ASTM WK92969 inspection pipeline...")
         t0 = time.perf_counter()
-
-        with timer_slot:
-            components.html(
-                """
-                <div style="display:flex; justify-content:space-between; align-items:center; font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size:0.86rem; color:#94a3b8; padding:2px 0;">
-                    <span>Stage: <strong style="color:#f8fafc;">Executing C++ Metrology Pipeline</strong></span>
-                    <span>Elapsed: <strong id="live-timer" style="color:#38bdf8; font-family:monospace; font-size:1.05rem; font-weight:700;">0.0s</strong></span>
-                </div>
-                <script>
-                    const startTime = Date.now();
-                    const timerElem = document.getElementById('live-timer');
-                    setInterval(function() {
-                        if (timerElem) {
-                            const sec = ((Date.now() - startTime) / 1000).toFixed(1);
-                            timerElem.textContent = sec + 's';
-                        }
-                    }, 100);
-                </script>
-                """,
-                height=34,
-            )
-
         file_bytes = uploaded_file.getvalue()
 
         try:
-            result, timings = run_analysis(
-                file_bytes,
-                uploaded_file.name,
-                grid_mm,
-                short_cutoff_mm,
-                long_cutoff_mm,
-                gaussian_mesh,
-            )
-
-            progress_bar.progress(85, text="Evaluating variogram & local roughness distribution...")
-            if result.grid.svr_map is not None:
-                svr_grid_um = result.grid.svr_map
-            else:
-                svr_grid_um = svr_map(
-                    result.grid.filtered,
-                    result.grid.valid_filled,
-                    result.config.grid_mm,
-                    result.config.svr_points,
-                    result.config.svr_span_mm,
+            with st.spinner("Analyzing surface topography (ASTM WK92969)..."):
+                result, timings = run_analysis(
+                    file_bytes,
+                    uploaded_file.name,
+                    grid_mm,
+                    short_cutoff_mm,
+                    long_cutoff_mm,
+                    gaussian_mesh,
                 )
 
-            progress_bar.progress(100, text="Analysis complete (100%)")
+                if result.grid.svr_map is not None:
+                    svr_grid_um = result.grid.svr_map
+                elif result.grid.filtered is not None and result.grid.valid_filled is not None:
+                    svr_grid_um = svr_map(
+                        result.grid.filtered,
+                        result.grid.valid_filled,
+                        result.config.grid_mm,
+                        result.config.svr_points,
+                        result.config.svr_span_mm,
+                    )
+                else:
+                    svr_grid_um = np.zeros((result.grid.height, result.grid.width))
+
             total_time = time.perf_counter() - t0
-            progress_slot.empty()
-            timer_slot.empty()
 
             # Store in session state for instant display manipulation
             st.session_state["current_scan_result"] = result
@@ -318,8 +292,6 @@ def main() -> None:
             st.session_state["last_analysis_time"] = total_time
             st.session_state["stage_timings"] = timings
         except Exception as exc:
-            progress_slot.empty()
-            timer_slot.empty()
             st.error(f"Analysis failed: {exc}")
             return
     else:
@@ -445,7 +417,14 @@ def render_dashboard(
 
     timing_breakdown = ""
     if timings and "core" in timings:
-        timing_breakdown = f'<span style="color:#94a3b8; font-size:0.8rem; margin-left:0.4rem;">(C++: {timings["core"]:.2f}s | Load: {timings.get("load", 0.0):.2f}s)</span>'
+        core_ms = timings["core"] * 1000.0
+        load_ms = timings.get("load", 0.0) * 1000.0
+        if core_ms < 1000.0:
+            timing_breakdown = f'<span style="color:#94a3b8; font-size:0.8rem; margin-left:0.4rem;">(C++ Core: {core_ms:.0f} ms | I/O: {load_ms:.0f} ms)</span>'
+        else:
+            timing_breakdown = f'<span style="color:#94a3b8; font-size:0.8rem; margin-left:0.4rem;">(C++: {timings["core"]:.2f}s | Load: {timings.get("load", 0.0):.2f}s)</span>'
+
+    runtime_display = f"{total_time * 1000.0:.0f} ms" if total_time < 1.0 else f"{total_time:.2f}s"
 
     ribbon_html = f"""
     <div class="status-ribbon">
@@ -468,7 +447,7 @@ def render_dashboard(
         </div>
         <div class="ribbon-item" style="margin-left: auto;">
             <span class="ribbon-label">Runtime:</span>
-            <span class="ribbon-value">{total_time:.2f}s</span>
+            <span class="ribbon-value" style="color:#38bdf8;">{runtime_display}</span>
             {timing_breakdown}
         </div>
     </div>
