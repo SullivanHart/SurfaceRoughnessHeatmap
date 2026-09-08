@@ -1,7 +1,8 @@
-from __future__ import annotations
-
+import concurrent.futures
 import gzip
 import io
+import math
+import sys
 import tempfile
 import time
 import zipfile
@@ -21,20 +22,72 @@ from svr_roughness import (
     svr_map,
 )
 
+# ── Upload Transfer Timing Tracker ──
+_UPLOAD_TIMES: dict[str, float] = {}
+
+
+def _install_upload_timing_hooks() -> None:
+    """Safely hook Starlette ASGI upload routes to measure actual network transfer time."""
+    if sys.platform == "emscripten":
+        return
+    try:
+        import gc
+        import starlette.routing
+
+        for obj in gc.get_objects():
+            if isinstance(obj, starlette.routing.Route):
+                path = getattr(obj, "path", "")
+                methods = getattr(obj, "methods", None)
+                if "upload_file" in path and methods and "PUT" in methods:
+                    if not getattr(obj, "_upload_timing_hooked", False):
+                        orig_app = obj.app
+
+                        def make_wrapper(inner):
+                            async def timed_app(scope, receive, send):
+                                if scope.get("type") == "http" and scope.get("method") == "PUT":
+                                    t0 = time.perf_counter()
+                                    try:
+                                        await inner(scope, receive, send)
+                                    finally:
+                                        dt = time.perf_counter() - t0
+                                        file_id = scope.get("path_params", {}).get("file_id")
+                                        if file_id:
+                                            _UPLOAD_TIMES[str(file_id)] = dt
+                                else:
+                                    await inner(scope, receive, send)
+
+                            return timed_app
+
+                        obj.app = make_wrapper(orig_app)
+                        setattr(obj, "_upload_timing_hooked", True)
+    except Exception:
+        pass
+
+    try:
+        from streamlit.runtime.memory_uploaded_file_manager import MemoryUploadedFileManager
+
+        if not getattr(MemoryUploadedFileManager, "_timing_hooked", False):
+            orig_add_file = MemoryUploadedFileManager.add_file
+
+            def timed_add_file(self, session_id, file):
+                if file.file_id not in _UPLOAD_TIMES:
+                    _UPLOAD_TIMES[f"ts_{file.file_id}"] = time.perf_counter()
+                return orig_add_file(self, session_id, file)
+
+            MemoryUploadedFileManager.add_file = timed_add_file
+            setattr(MemoryUploadedFileManager, "_timing_hooked", True)
+    except Exception:
+        pass
+
+
+_install_upload_timing_hooks()
+
 SUPPORTED_TYPES = ["ply", "pcd", "stl", "obj", "csv", "tsv", "xyz", "txt", "npy", "npz", "gz", "zip"]
 SCAN_EXTENSIONS = {".ply", ".pcd", ".stl", ".obj", ".csv", ".tsv", ".xyz", ".txt", ".npy", ".npz"}
 COLOR_SCALES = ["Jet", "Turbo", "Viridis", "Plasma", "Inferno", "Rainbow"]
 UNITS = ["µm", "mm", "in"]
 
-st.set_page_config(
-    page_title="S_VR Metrology | ASTM WK92969",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
-
-# ── Industrial Theme Custom CSS (Theme-Adaptive, Dark/Light Compatible) ──
-st.markdown(
-    """
+CUSTOM_CSS = """
     <style>
     /* Clean, modern typography and layout */
     .main-header {
@@ -147,9 +200,7 @@ st.markdown(
         font-weight: 600;
     }
     </style>
-    """,
-    unsafe_allow_html=True,
-)
+"""
 
 
 def extract_scan_payload(
@@ -243,12 +294,149 @@ def generate_inspection_report(result: RoughnessResult, unit: str) -> str:
     return base_report + "\n" + compliance_text
 
 
+UPLOAD_BRIDGE_HTML = """
+<div id="upload-status-banner" style="display: none; margin-bottom: 1.25rem; background: rgba(56, 189, 248, 0.08); border: 1px solid rgba(56, 189, 248, 0.28); border-radius: 8px; padding: 0.85rem 1.15rem; font-family: Inter, -apple-system, BlinkMacSystemFont, sans-serif;">
+  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem; font-size: 0.86rem;">
+    <div style="display: flex; align-items: center; gap: 0.5rem;">
+      <span style="display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #38bdf8;"></span>
+      <span id="upload-status-text" style="font-weight: 600; color: #38bdf8;">Uploading 3D scan...</span>
+    </div>
+    <span id="upload-status-pct" style="font-weight: 700; color: #38bdf8; font-variant-numeric: tabular-nums;">0%</span>
+  </div>
+  <div style="width: 100%; height: 6px; background: rgba(127, 127, 127, 0.18); border-radius: 3px; overflow: hidden;">
+    <div id="upload-status-fill" style="width: 0%; height: 100%; background: #38bdf8; border-radius: 3px; transition: width 0.08s ease-out;"></div>
+  </div>
+</div>
+
+<script>
+(function() {
+  const win = window.parent || window;
+  const doc = win.document || document;
+
+  function updateBanner(text, pct) {
+    const banner = doc.getElementById('upload-status-banner');
+    const fill = doc.getElementById('upload-status-fill');
+    const txt = doc.getElementById('upload-status-text');
+    const pctEl = doc.getElementById('upload-status-pct');
+    if (banner) banner.style.display = 'block';
+    if (fill) fill.style.width = Math.min(100, Math.max(0, pct)) + '%';
+    if (pctEl) pctEl.textContent = Math.round(pct) + '%';
+    if (txt && text) txt.textContent = text;
+  }
+
+  // 1. Universal XHR hook for live upload progress display
+  if (!win._surfInspectXhrHooked) {
+    win._surfInspectXhrHooked = true;
+    const origOpen = win.XMLHttpRequest.prototype.open;
+    const origSend = win.XMLHttpRequest.prototype.send;
+
+    win.XMLHttpRequest.prototype.open = function(method, url) {
+      this._url = url;
+      this._method = method;
+      return origOpen.apply(this, arguments);
+    };
+
+    win.XMLHttpRequest.prototype.send = function(data) {
+      if (this._method === 'PUT' && this._url && this._url.includes('_stcore/upload_file')) {
+        updateBanner('Uploading surface scan to inspection engine...', 5);
+        if (this.upload) {
+          this.upload.addEventListener('progress', function(e) {
+            if (e.lengthComputable) {
+              const pct = (e.loaded / e.total) * 100;
+              const loadedMb = (e.loaded / 1048576).toFixed(1);
+              const totalMb = (e.total / 1048576).toFixed(1);
+              if (pct < 99.5) {
+                updateBanner(`Uploading 3D scan (${loadedMb} / ${totalMb} MB)...`, pct);
+              } else {
+                updateBanner('Upload complete. Handing over to Svr metrology engine...', 100);
+              }
+            }
+          });
+          this.upload.addEventListener('load', function() {
+            updateBanner('Upload complete. Handing over to Svr metrology engine...', 100);
+          });
+        }
+      }
+      return origSend.apply(this, arguments);
+    };
+  }
+
+  // 2. Client-side transparent gzip compression hook
+  function hookStreamlitEndpoints() {
+    if (win._surfInspectEndpointsHooked) return true;
+    try {
+      const root = doc.getElementById('root');
+      if (!root) return false;
+      const fiberKey = Object.keys(root).find(k => k.startsWith('__reactContainer') || k.startsWith('__reactFiber'));
+      if (!fiberKey) return false;
+
+      let queue = [root[fiberKey]];
+      let endpoints = null;
+
+      while (queue.length > 0 && queue.length < 500) {
+        let node = queue.shift();
+        if (!node) continue;
+        if (node.stateNode && node.stateNode.endpoints) {
+          endpoints = node.stateNode.endpoints;
+          break;
+        }
+        if (node.memoizedProps && node.memoizedProps.endpoints) {
+          endpoints = node.memoizedProps.endpoints;
+          break;
+        }
+        if (node.child) queue.push(node.child);
+        if (node.sibling) queue.push(node.sibling);
+      }
+
+      if (endpoints && endpoints.uploadFileUploaderFile) {
+        const origUpload = endpoints.uploadFileUploaderFile.bind(endpoints);
+        endpoints.uploadFileUploaderFile = async function(uploadUrl, file, sessionId, onUploadProgress, abortSignal) {
+          let fileToUpload = file;
+          if (typeof CompressionStream !== 'undefined' && file.size > 300000 && !file.name.endsWith('.gz') && !file.name.endsWith('.zip')) {
+            try {
+              updateBanner(`Compressing ${file.name} for high-speed transmission...`, 15);
+              const stream = file.stream().pipeThrough(new CompressionStream('gzip'));
+              const blob = await new Response(stream).blob();
+              fileToUpload = new File([blob], file.name + '.gz', { type: 'application/gzip' });
+              updateBanner(`Compressed to ${(fileToUpload.size / 1048576).toFixed(1)} MB. Uploading...`, 25);
+            } catch (err) {
+              fileToUpload = file;
+            }
+          }
+          return origUpload(uploadUrl, fileToUpload, sessionId, onUploadProgress, abortSignal);
+        };
+        win._surfInspectEndpointsHooked = true;
+        return true;
+      }
+    } catch (e) {}
+    return false;
+  }
+
+  if (!hookStreamlitEndpoints()) {
+    const timer = setInterval(function() {
+      if (hookStreamlitEndpoints()) clearInterval(timer);
+    }, 200);
+    setTimeout(function() { clearInterval(timer); }, 10000);
+  }
+})();
+</script>
+"""
+
+
 def main() -> None:
+    st.set_page_config(
+        page_title="S_VR Metrology | ASTM WK92969",
+        layout="wide",
+        initial_sidebar_state="expanded",
+    )
+    st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
     st.markdown('<div class="main-header">S<sub>VR</sub> Surface Roughness Metrology</div>', unsafe_allow_html=True)
     st.markdown(
         '<div class="sub-header">ASTM WK92969 Digital Surface Inspection Standard &bull; ISO 16610-61 Gaussian Areal Filtration</div>',
         unsafe_allow_html=True,
     )
+    if sys.platform != "emscripten":
+        st.html(UPLOAD_BRIDGE_HTML, unsafe_allow_javascript=True)
 
     with st.sidebar:
         st.subheader("Inspection Setup")
@@ -298,7 +486,16 @@ def main() -> None:
         )
 
     if uploaded_file is None:
-        for k in ["current_scan_result", "current_svr_grid_um", "scan_upload_id", "filter_signature", "last_analysis_time", "effective_name"]:
+        for k in [
+            "current_scan_result",
+            "current_svr_grid_um",
+            "scan_upload_id",
+            "filter_signature",
+            "last_analysis_time",
+            "decomp_time_ms",
+            "upload_time_s",
+            "effective_name",
+        ]:
             st.session_state.pop(k, None)
         st.info("Upload a 3D scan (.pcd, .ply, .stl, .csv) in the sidebar to begin inspection.")
         return
@@ -319,13 +516,27 @@ def main() -> None:
     )
 
     if need_analysis:
-        t0 = time.perf_counter()
         raw_bytes = uploaded_file.getvalue()
         file_bytes, effective_name, meta = extract_scan_payload(raw_bytes, uploaded_file.name)
-        decompress_time_s = meta.get("decompress_time_ms", 0.0) / 1000.0
+        decomp_time_ms = meta.get("decompress_time_ms", 0.0)
+        decompress_time_s = decomp_time_ms / 1000.0
+
+        # Retrieve tracked upload transfer time for this file
+        upload_time_s = _UPLOAD_TIMES.get(str(upload_id))
+
+        # Calibrated analysis duration estimate based on payload size and filter mode
+        payload_mb = len(file_bytes) / (1024 * 1024)
+        if gaussian_mesh:
+            est_duration = max(0.20, 0.06 + payload_mb * 0.038)
+        else:
+            est_duration = max(1.50, 0.50 + payload_mb * 1.15)
+
+        progress_bar = st.progress(0.0, text="Initializing surface topography analysis...")
+        t_prog_start = time.perf_counter()
 
         try:
-            with st.spinner("Analyzing surface topography (ASTM WK92969)..."):
+            if sys.platform == "emscripten":
+                progress_bar.progress(0.35, text="Analyzing surface topography (§8.2 Areal Grid)...")
                 result, timings = run_analysis(
                     file_bytes,
                     effective_name,
@@ -335,37 +546,79 @@ def main() -> None:
                     gaussian_mesh,
                     decompress_time_s=decompress_time_s,
                 )
-
-                if result.grid.svr_map is not None:
-                    svr_grid_um = result.grid.svr_map
-                elif result.grid.filtered is not None and result.grid.valid_filled is not None:
-                    svr_grid_um = svr_map(
-                        result.grid.filtered,
-                        result.grid.valid_filled,
-                        result.config.grid_mm,
-                        result.config.svr_points,
-                        result.config.svr_span_mm,
+            else:
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                    future = executor.submit(
+                        run_analysis,
+                        file_bytes,
+                        effective_name,
+                        grid_mm,
+                        short_cutoff_mm,
+                        long_cutoff_mm,
+                        gaussian_mesh,
+                        decompress_time_s=decompress_time_s,
                     )
-                else:
-                    svr_grid_um = np.zeros((result.grid.height, result.grid.width))
 
-            total_time = time.perf_counter() - t0
+                    while not future.done():
+                        elapsed = time.perf_counter() - t_prog_start
+                        ratio = elapsed / est_duration
+                        if ratio < 0.90:
+                            prog = ratio * 0.90
+                        else:
+                            # Smooth asymptotic approach towards 0.97 without stalling
+                            prog = 0.81 + (1.0 - math.exp(-(ratio - 0.90) * 1.5)) * 0.16
+                        prog = min(max(prog, 0.0), 0.97)
+
+                        rem = max(0.0, est_duration - elapsed)
+                        if rem > 0.05:
+                            status_text = f"Analyzing surface topography (§8.2 Areal Grid)... (~{rem:.1f}s remaining)"
+                        else:
+                            status_text = "Finalizing Svr calculation & spatial grid..."
+
+                        progress_bar.progress(prog, text=status_text)
+                        time.sleep(0.025)
+
+                    result, timings = future.result()
+
+            progress_bar.progress(1.0, text="Analysis complete!")
+            time.sleep(0.04)
+
+            if result.grid.svr_map is not None:
+                svr_grid_um = result.grid.svr_map
+            elif result.grid.filtered is not None and result.grid.valid_filled is not None:
+                svr_grid_um = svr_map(
+                    result.grid.filtered,
+                    result.grid.valid_filled,
+                    result.config.grid_mm,
+                    result.config.svr_points,
+                    result.config.svr_span_mm,
+                )
+            else:
+                svr_grid_um = np.zeros((result.grid.height, result.grid.width))
+
+            analysis_time = timings.get("total", 0.0)
 
             # Store in session state for instant display manipulation
             st.session_state["current_scan_result"] = result
             st.session_state["current_svr_grid_um"] = svr_grid_um
             st.session_state["scan_upload_id"] = upload_id
             st.session_state["filter_signature"] = filter_sig
-            st.session_state["last_analysis_time"] = total_time
+            st.session_state["last_analysis_time"] = analysis_time
+            st.session_state["decomp_time_ms"] = decomp_time_ms
+            st.session_state["upload_time_s"] = upload_time_s
             st.session_state["stage_timings"] = timings
             st.session_state["effective_name"] = effective_name
         except Exception as exc:
             st.error(f"Analysis failed: {exc}")
             return
+        finally:
+            progress_bar.empty()
     else:
         result = st.session_state["current_scan_result"]
         svr_grid_um = st.session_state["current_svr_grid_um"]
-        total_time = st.session_state.get("last_analysis_time", 0.0)
+        analysis_time = st.session_state.get("last_analysis_time", 0.0)
+        decomp_time_ms = st.session_state.get("decomp_time_ms", 0.0)
+        upload_time_s = st.session_state.get("upload_time_s")
         timings = st.session_state.get("stage_timings")
         effective_name = st.session_state.get("effective_name", uploaded_file.name)
 
@@ -376,7 +629,9 @@ def main() -> None:
         color_scale,
         robust_contrast,
         selected_unit,
-        total_time,
+        analysis_time,
+        decomp_time_ms=decomp_time_ms,
+        upload_time_s=upload_time_s,
     )
 
 
@@ -416,7 +671,7 @@ def run_analysis(
             "write": t_write - t_start,
             "load": t_load - t_write,
             "core": t_analyze - t_load,
-            "total": (t_analyze - t_start) + decompress_time_s,
+            "total": t_analyze - t_start,
         }
         return result, timings
     finally:
@@ -440,7 +695,9 @@ def render_dashboard(
     color_scale: str,
     robust_contrast: bool,
     unit: str,
-    total_time: float,
+    analysis_time: float,
+    decomp_time_ms: float = 0.0,
+    upload_time_s: float | None = None,
 ) -> None:
     # ── Unit Conversion for 2D Grid ──
     if unit == "mm":
@@ -472,7 +729,22 @@ def render_dashboard(
         else f'<span class="badge badge-warn">{spacing:.3f} mm (&gt; 0.20 mm)</span>'
     )
 
-    runtime_display = f"{total_time * 1000.0:.0f} ms" if total_time < 1.0 else f"{total_time:.2f}s"
+    # Timings
+    decomp_display = (
+        f"{decomp_time_ms:.0f} ms"
+        if (0.0 < decomp_time_ms < 1000.0)
+        else (f"{decomp_time_ms / 1000.0:.2f}s" if decomp_time_ms >= 1000.0 else "N/A")
+    )
+    upload_display = (
+        f"{upload_time_s * 1000.0:.0f} ms"
+        if (upload_time_s is not None and 0.0 < upload_time_s < 1.0)
+        else (f"{upload_time_s:.2f}s" if upload_time_s is not None and upload_time_s >= 1.0 else "N/A")
+    )
+    analysis_display = (
+        f"{analysis_time * 1000.0:.0f} ms"
+        if analysis_time < 1.0
+        else f"{analysis_time:.2f}s"
+    )
 
     ribbon_html = f"""
     <div class="status-ribbon">
@@ -493,12 +765,31 @@ def render_dashboard(
             {density_badge}
         </div>
         <div class="ribbon-item" style="margin-left: auto;">
-            <span class="ribbon-label">Runtime:</span>
-            <span class="ribbon-value" style="color:#38bdf8;">{runtime_display}</span>
+            <span class="ribbon-label">Decomp:</span>
+            <span class="ribbon-value">{decomp_display}</span>
+        </div>
+        <div class="ribbon-item">
+            <span class="ribbon-label">Upload:</span>
+            <span class="ribbon-value">{upload_display}</span>
+        </div>
+        <div class="ribbon-item">
+            <span class="ribbon-label">Analysis:</span>
+            <span class="ribbon-value" style="color:#38bdf8;">{analysis_display}</span>
         </div>
     </div>
     """
     st.markdown(ribbon_html, unsafe_allow_html=True)
+    st.html(
+        """<script>
+        (function() {
+          const win = window.parent || window;
+          const doc = win.document || document;
+          const banner = doc.getElementById('upload-status-banner');
+          if (banner) banner.style.display = 'none';
+        })();
+        </script>""",
+        unsafe_allow_javascript=True,
+    )
 
     # ── Main View: Interactive Heatmap + Primary KPI Card ──
     col_chart, col_kpi = st.columns([3, 1])
