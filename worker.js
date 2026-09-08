@@ -179,13 +179,7 @@ def run_analysis_payload(file_path_str, file_name, grid_mm, short_cutoff_mm, lon
         ),
     }
 
-    step_sub = max(1, max(res.grid_width, res.grid_height) // 120)
-    sub_z = res.grid_z_mm[::step_sub, ::step_sub]
-    sub_z = np.where(np.isnan(sub_z), None, np.round(sub_z, 4)).tolist()
-
-    step_svr = max(1, max(res.grid_width, res.grid_height) // 250)
-    sub_svr = res.grid_svr_um[::step_svr, ::step_svr]
-    grid_svr = np.where(np.isnan(sub_svr), None, np.round(sub_svr, 3)).tolist()
+    grid_svr = np.where(np.isnan(res.grid_svr_um), None, np.round(res.grid_svr_um, 3)).tolist()
 
     out = {
         "effective_name": eff_name,
@@ -199,16 +193,14 @@ def run_analysis_payload(file_path_str, file_name, grid_mm, short_cutoff_mm, lon
         "average_point_spacing_mm": grid_mm,
         "grid_coverage_pct": float(np.count_nonzero(~np.isnan(res.grid_z_mm)) / res.grid_z_mm.size * 100.0),
         "grid_svr": grid_svr,
-        "grid_width": int(sub_svr.shape[1]),
-        "grid_height": int(sub_svr.shape[0]),
+        "grid_width": int(res.grid_width),
+        "grid_height": int(res.grid_height),
         "origin_x": float(res.grid_origin_mm[0]),
         "origin_y": float(res.grid_origin_mm[1]),
-        "pitch_mm": float(grid_mm * step_svr),
+        "pitch_mm": float(grid_mm),
         "var_bins": [round(float(x), 4) for x in res.variogram_bins_um],
         "variogram_bins": [round(float(x), 4) for x in res.variogram_bins_um],
         "variogram_counts": [int(x) for x in res.variogram_counts],
-        "subsampled_z": sub_z,
-        "subsample_step": step_sub,
         "comparators": comparators,
         "report_text": report_str,
         "timings": {
