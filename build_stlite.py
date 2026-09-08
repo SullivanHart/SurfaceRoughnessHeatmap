@@ -4,16 +4,29 @@ from pathlib import Path
 
 
 def build():
-    root = Path(__file__).resolve().parents[1]
-    svr_dir = root / "svr-roughness" / "src" / "svr_roughness"
-    files = {}
+    current_dir = Path(__file__).resolve().parent
+    local_svr = current_dir / "svr_roughness"
+    parent_svr = current_dir.parent / "svr-roughness" / "src" / "svr_roughness"
 
+    if parent_svr.exists():
+        # Keep local vendor directory updated from core source
+        local_svr.mkdir(parents=True, exist_ok=True)
+        for py_file in parent_svr.glob("*.py"):
+            if py_file.name != "native.py":
+                (local_svr / py_file.name).write_text(py_file.read_text(encoding="utf-8"), encoding="utf-8")
+        svr_dir = local_svr
+    elif local_svr.exists():
+        svr_dir = local_svr
+    else:
+        raise FileNotFoundError(f"svr_roughness not found in {local_svr} or {parent_svr}")
+
+    files = {}
     for py_file in sorted(svr_dir.glob("*.py")):
         if py_file.name == "native.py":
             continue
         files[f"svr_roughness/{py_file.name}"] = py_file.read_text(encoding="utf-8")
 
-    app_code = (root / "heatmap" / "app.py").read_text(encoding="utf-8")
+    app_code = (current_dir / "app.py").read_text(encoding="utf-8")
     files["app.py"] = app_code
 
     # Safely escape '<' as unicode escape so JSON inside <script> can never break HTML parsing
@@ -117,7 +130,7 @@ def build():
         <div class="loading-sub">ASTM WK92969 &bull; Pure-Python Client-Side WebAssembly</div>
         <div class="loading-status" id="loading-status">Loading Pyodide WASM runtime...</div>
         <div class="loading-desc" id="loading-desc">
-          Downloading in-browser scientific packages (NumPy, SciPy, Pandas, Plotly).
+          Loading lightweight in-browser scientific runtime (NumPy).
           Assets are cached by your browser for instant subsequent starts.
         </div>
         <div id="error-box"></div>
@@ -152,7 +165,7 @@ def build():
         {{
           entrypoint: "app.py",
           files: files,
-          requirements: ["numpy", "scipy", "pandas", "plotly"],
+          requirements: ["numpy"],
           streamlitConfig: {{
             "client.toolbarMode": "minimal",
             "theme.base": "dark",
@@ -182,7 +195,7 @@ def build():
   </body>
 </html>
 """
-    out_html = root / "heatmap" / "index.html"
+    out_html = current_dir / "index.html"
     out_html.write_text(html_content, encoding="utf-8")
     print(f"Wrote {out_html} ({out_html.stat().st_size:,} bytes)")
 
