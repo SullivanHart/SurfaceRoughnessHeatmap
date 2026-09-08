@@ -164,7 +164,7 @@ def load_stl_vertices(path: str | Path) -> FloatArray:
         vertices = _read_binary_stl_vertices(raw)
     else:
         vertices = _read_ascii_stl_vertices(raw.decode("utf-8", errors="ignore"))
-    return _clean_loaded_points(np.unique(np.round(vertices, decimals=9), axis=0))
+    return _clean_loaded_points(vertices)
 
 
 def _read_pcd_header(handle: BinaryIO) -> tuple[dict[str, str], int]:

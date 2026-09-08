@@ -211,14 +211,55 @@ def rasterize_elevation_grid(
     origin_x = min_x + x_begin * pitch_m
     origin_y = min_y + y_begin * pitch_m
 
-    # Fill interior holes (fillHolesInGrid)
+    # Fill interior holes (fillHolesInGrid: fast 4-connected 8-pass iterative propagation)
     if np.any(~valid) and np.any(valid):
-        y_val, x_val = np.where(valid)
-        y_mis, x_mis = np.where(~valid)
-        for i in range(len(y_mis)):
-            d2 = (y_val - y_mis[i]) ** 2 + (x_val - x_mis[i]) ** 2
-            best = int(np.argmin(d2))
-            grid_z[y_mis[i], x_mis[i]] = grid_z[y_val[best], x_val[best]]
+        filled_z = grid_z.copy()
+        current_valid = valid.copy()
+        for _ in range(8):
+            if np.all(current_valid):
+                break
+            up = np.roll(filled_z, 1, axis=0)
+            down = np.roll(filled_z, -1, axis=0)
+            left = np.roll(filled_z, 1, axis=1)
+            right = np.roll(filled_z, -1, axis=1)
+
+            up_v = np.roll(current_valid, 1, axis=0)
+            down_v = np.roll(current_valid, -1, axis=0)
+            left_v = np.roll(current_valid, 1, axis=1)
+            right_v = np.roll(current_valid, -1, axis=1)
+
+            up_v[0, :] = False
+            down_v[-1, :] = False
+            left_v[:, 0] = False
+            right_v[:, -1] = False
+
+            sum_neighbors = (
+                np.where(up_v, up, 0.0)
+                + np.where(down_v, down, 0.0)
+                + np.where(left_v, left, 0.0)
+                + np.where(right_v, right, 0.0)
+            )
+            count_neighbors = (
+                up_v.astype(np.int32)
+                + down_v.astype(np.int32)
+                + left_v.astype(np.int32)
+                + right_v.astype(np.int32)
+            )
+
+            fill_mask = (~current_valid) & (count_neighbors > 0)
+            if not np.any(fill_mask):
+                break
+
+            filled_z[fill_mask] = sum_neighbors[fill_mask] / count_neighbors[fill_mask]
+            current_valid[fill_mask] = True
+
+        if np.any(~current_valid):
+            mean_z = np.nanmean(filled_z)
+            filled_z[~current_valid] = mean_z
+            current_valid[:] = True
+
+        grid_z = filled_z
+        valid = current_valid
 
     return grid_z, valid, origin_x, origin_y
 
@@ -405,6 +446,7 @@ def analyze_pure_python(
     long_cutoff_mm: float = 25.0,
     variogram_points: int = 10,
     variogram_span_mm: float = 0.5,
+    progress_callback = None,
 ) -> PurePythonResult:
     """Execute the complete SurfInspect ASTM WK92969 analysis in 100% pure Python."""
     raw_pts = np.asarray(points_xyz_mm, dtype=np.float64)
@@ -414,7 +456,10 @@ def analyze_pure_python(
     finite_mask = np.isfinite(raw_pts).all(axis=1)
     pts = raw_pts[finite_mask]
     if len(pts) < 20:
-        raise ValueError("SurfInspect engine requires at least 20 valid points")
+        raise ValueError("Requires at least 20 valid points")
+
+    if progress_callback:
+        progress_callback(40, "Filtering coordinate bounds...")
 
     # Step 1: Centering & Conversion to meters
     centroid = pts.mean(axis=0)
@@ -425,18 +470,28 @@ def analyze_pure_python(
     span_m = variogram_span_mm * 0.001
 
     # Step 2: Voxel Grid Downsampling
+    if progress_callback:
+        progress_callback(50, "Downsampling voxel grid...")
     downsampled_m = voxel_downsample(pts_m, voxel_size_m)
 
     # Step 3: Form Removal via PCA Plane Fitting
+    if progress_callback:
+        progress_callback(62, "Aligning surface plane...")
     rotated_m, _, _ = pca_align_plane(downsampled_m)
 
     # Step 4: 2.5D Regular Elevation Grid Rasterization
+    if progress_callback:
+        progress_callback(72, "Rasterizing elevation grid...")
     grid_z_m, valid_mask, origin_x_m, origin_y_m = rasterize_elevation_grid(rotated_m, voxel_size_m)
 
     # Step 5: Dual-Pass ISO 16610-61 Gaussian Filtration
+    if progress_callback:
+        progress_callback(82, "Applying Gaussian filtration...")
     roughness_z_m = apply_dual_pass_gaussian_filter(grid_z_m, voxel_size_m, short_cutoff_m, long_cutoff_m)
 
     # Step 6: Variogram & Svr Metrology
+    if progress_callback:
+        progress_callback(90, "Calculating variogram and Svr...")
     sa_um, sq_um, svr_um, var_bins_um, var_counts, grid_svr_um = compute_variogram_and_svr(
         roughness_z_m,
         voxel_size_m,

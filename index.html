@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Surface Roughness Analysis | HAM Lab</title>
+    <title>SurfInspect</title>
     <link rel="stylesheet" href="style.css" />
     <!-- Plotly.js for interactive WebGL 2D Heatmap & charts -->
     <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
@@ -80,9 +80,9 @@
           </div>
         </div>
 
-        <div class="engine-status">
+        <div class="system-status">
           <div class="status-dot" id="status-dot"></div>
-          <span id="status-text">Booting WebAssembly...</span>
+          <span id="status-text">Initializing...</span>
         </div>
       </aside>
 
@@ -90,8 +90,7 @@
       <main class="main-content">
         <header class="main-header-row">
           <div>
-            <h1 class="main-header">Surface Roughness Analysis</h1>
-            <p class="sub-header">HAM Lab &bull; Iowa State IMSE</p>
+            <h1 class="main-header">SurfInspect</h1>
           </div>
           <div>
             <button id="theme-btn" class="theme-icon-btn" type="button" aria-label="Toggle theme" title="Switch to Light Mode">

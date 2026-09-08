@@ -2,6 +2,7 @@
 let worker = null
 let currentResult = null
 let selectedFile = null
+let analysisStartTime = 0
 
 // DOM Elements
 const fileInput = document.getElementById('file-input')
@@ -79,15 +80,83 @@ function updateDropzoneFileDisplay (file, extraInfo) {
         : (file.size / 1024).toFixed(0) + ' KB'
     if (dropzoneText) dropzoneText.textContent = file.name
     if (dropzoneHint) {
-      dropzoneHint.textContent = `${sizeStr}${
-        extraInfo ? ' • ' + extraInfo : ''
-      }`
+      dropzoneHint.textContent = extraInfo
+        ? `${sizeStr} • ${extraInfo}`
+        : sizeStr
     }
   } else {
     dropzone.classList.remove('has-file')
     if (dropzoneText) dropzoneText.textContent = 'Select or Drag 3D Scan'
     if (dropzoneHint) dropzoneHint.textContent = 'PLY, PCD, STL, OBJ, CSV, XYZ'
   }
+}
+
+let progressInterval = null
+let currentPercent = 0
+let targetPercent = 0
+
+let completeTimeout = null
+
+function setProgress (percent, text) {
+  if (completeTimeout) {
+    clearTimeout(completeTimeout)
+    completeTimeout = null
+  }
+  if (progressBar) progressBar.style.display = 'block'
+  targetPercent = Math.max(targetPercent, percent)
+  if (statusText && text) statusText.textContent = text
+
+  if (!progressInterval) {
+    progressInterval = setInterval(() => {
+      if (currentPercent < targetPercent) {
+        const step = Math.max(0.5, (targetPercent - currentPercent) * 0.25)
+        currentPercent = Math.min(targetPercent, currentPercent + step)
+      } else if (targetPercent < 98) {
+        currentPercent = Math.min(targetPercent + 3.5, currentPercent + 0.08)
+      }
+      if (progressFill) {
+        progressFill.style.width = currentPercent.toFixed(1) + '%'
+      }
+    }, 30)
+  }
+}
+
+function completeProgress (text) {
+  targetPercent = 100
+  currentPercent = 100
+  if (progressFill) progressFill.style.width = '100%'
+  if (statusText && text) statusText.textContent = text
+
+  if (progressInterval) {
+    clearInterval(progressInterval)
+    progressInterval = null
+  }
+
+  if (completeTimeout) clearTimeout(completeTimeout)
+  completeTimeout = setTimeout(() => {
+    if (progressBar) {
+      progressBar.style.display = 'none'
+      currentPercent = 0
+      targetPercent = 0
+      if (progressFill) progressFill.style.width = '0%'
+    }
+    completeTimeout = null
+  }, 400)
+}
+
+function resetProgress () {
+  if (completeTimeout) {
+    clearTimeout(completeTimeout)
+    completeTimeout = null
+  }
+  if (progressInterval) {
+    clearInterval(progressInterval)
+    progressInterval = null
+  }
+  currentPercent = 0
+  targetPercent = 0
+  if (progressBar) progressBar.style.display = 'none'
+  if (progressFill) progressFill.style.width = '0%'
 }
 
 function initWorker () {
@@ -97,26 +166,32 @@ function initWorker () {
     const { type, text, percent, data, error } = e.data
 
     if (type === 'status') {
-      statusText.textContent = text
+      if (statusText) statusText.textContent = text
     } else if (type === 'ready') {
-      statusDot.classList.add('ready')
-      statusText.textContent = 'Engine ready (WebAssembly)'
+      if (statusDot) {
+        statusDot.className = 'status-dot ready'
+      }
+      if (statusText) statusText.textContent = 'Ready'
       if (selectedFile) {
         startAnalysis(selectedFile)
       }
     } else if (type === 'progress') {
-      progressBar.style.display = 'block'
-      progressFill.style.width = (percent || 50) + '%'
-      statusText.textContent = text
+      if (statusDot) statusDot.className = 'status-dot analyzing'
+      setProgress(percent, text)
     } else if (type === 'result') {
-      progressBar.style.display = 'none'
-      statusText.textContent = 'Analysis complete'
+      if (statusDot) statusDot.className = 'status-dot ready'
+      completeProgress('Ready')
       currentResult = data
       renderResults(data)
     } else if (type === 'error') {
-      progressBar.style.display = 'none'
-      statusText.textContent = 'Error: ' + error
-      alert('Analysis error: ' + error)
+      if (statusDot) statusDot.className = 'status-dot ready'
+      resetProgress()
+      if (resultsContainer) {
+        resultsContainer.style.opacity = '1'
+        resultsContainer.style.pointerEvents = 'auto'
+      }
+      if (statusText) statusText.textContent = 'Error: ' + error
+      console.error('Analysis error:', error)
     }
   }
 }
@@ -124,29 +199,60 @@ function initWorker () {
 function handleFileSelect (file) {
   if (!file) return
   selectedFile = file
-  updateDropzoneFileDisplay(file, 'Preparing scan...')
+
+  // Immediately update Dropzone filename and size
+  updateDropzoneFileDisplay(file)
+
+  // Immediately update Ribbon filename and status if results container is displayed
+  const ribbonFilename = document.getElementById('ribbon-filename')
+  if (ribbonFilename) ribbonFilename.textContent = file.name
+  const ribbonTiming = document.getElementById('ribbon-timing')
+  if (ribbonTiming) ribbonTiming.textContent = 'Calculating...'
+  const ribbonSvr = document.getElementById('ribbon-svr')
+  if (ribbonSvr) ribbonSvr.textContent = 'Analyzing...'
+
+  // If previous results are displayed, subtly dim them to indicate active recalculation
+  if (resultsContainer && resultsContainer.style.display !== 'none') {
+    resultsContainer.style.opacity = '0.45'
+    resultsContainer.style.pointerEvents = 'none'
+  }
+
+  // Immediately launch progress bar at 10%
+  if (completeTimeout) {
+    clearTimeout(completeTimeout)
+    completeTimeout = null
+  }
+  currentPercent = 10
+  targetPercent = 15
+  if (progressBar) progressBar.style.display = 'block'
+  if (progressFill) progressFill.style.width = '10%'
+  setProgress(15, `Loading ${file.name}...`)
+
   startAnalysis(file)
 }
 
 async function startAnalysis (file) {
-  progressBar.style.display = 'block'
-  progressFill.style.width = '15%'
-  statusText.textContent = `Reading ${file.name}...`
-  updateDropzoneFileDisplay(file, 'Reading binary data...')
+  analysisStartTime = performance.now()
+  if (statusDot) statusDot.className = 'status-dot analyzing'
+  setProgress(18, `Loading ${file.name}...`)
 
   const arrayBuffer = await file.arrayBuffer()
+  setProgress(28, 'Transferring scan data...')
 
-  worker.postMessage({
-    type: 'analyze',
-    payload: {
-      fileData: arrayBuffer,
-      fileName: file.name,
-      grid_mm: parseFloat(gridPitchInput.value) || 0.2,
-      short_cutoff_mm: parseFloat(shortCutoffInput.value) || 1.0,
-      long_cutoff_mm: parseFloat(longCutoffInput.value) || 25.0,
-      gaussian_mesh: gaussianCheckbox.checked
-    }
-  })
+  worker.postMessage(
+    {
+      type: 'analyze',
+      payload: {
+        fileData: arrayBuffer,
+        fileName: file.name,
+        grid_mm: parseFloat(gridPitchInput.value) || 0.2,
+        short_cutoff_mm: parseFloat(shortCutoffInput.value) || 1.0,
+        long_cutoff_mm: parseFloat(longCutoffInput.value) || 25.0,
+        gaussian_mesh: gaussianCheckbox.checked
+      }
+    },
+    [arrayBuffer]
+  )
 }
 
 function formatVal (valUm, unit) {
@@ -158,6 +264,8 @@ function formatVal (valUm, unit) {
 function renderResults (res) {
   emptyState.style.display = 'none'
   resultsContainer.style.display = 'block'
+  resultsContainer.style.opacity = '1'
+  resultsContainer.style.pointerEvents = 'auto'
 
   const unit = unitSelect.value
   const fileName = res.effective_name || selectedFile.name
@@ -185,8 +293,10 @@ function renderResults (res) {
   spacingBadge.className = 'badge ' + (spacingOk ? 'badge-pass' : 'badge-warn')
   spacingBadge.textContent = `${spacing.toFixed(3)} mm`
 
-  const timings = res.timings || {}
-  const totalSec = ((timings.total_ms || 0) / 1000.0).toFixed(2)
+  const totalSec =
+    analysisStartTime > 0
+      ? ((performance.now() - analysisStartTime) / 1000.0).toFixed(2)
+      : ((res.timings?.total_ms || 0) / 1000.0).toFixed(2)
   document.getElementById('ribbon-timing').textContent = `${totalSec} s`
 
   // KPI Card
@@ -393,14 +503,22 @@ function renderVariogram (res) {
 }
 
 // Event Listeners
-dropzone.addEventListener('click', () => fileInput.click())
+dropzone.addEventListener('click', () => {
+  fileInput.value = ''
+  fileInput.click()
+})
 if (dropzoneReplaceBtn) {
   dropzoneReplaceBtn.addEventListener('click', e => {
     e.stopPropagation()
+    fileInput.value = ''
     fileInput.click()
   })
 }
-fileInput.addEventListener('change', e => handleFileSelect(e.target.files[0]))
+fileInput.addEventListener('change', e => {
+  if (e.target.files && e.target.files.length > 0) {
+    handleFileSelect(e.target.files[0])
+  }
+})
 
 dropzone.addEventListener('dragover', e => {
   e.preventDefault()
