@@ -23,6 +23,50 @@ const emptyState = document.getElementById('empty-state')
 const resultsContainer = document.getElementById('results-container')
 const reportPre = document.getElementById('report-pre')
 const downloadBtn = document.getElementById('download-report-btn')
+const themeBtn = document.getElementById('theme-btn')
+const themeIconMoon = document.getElementById('theme-icon-moon')
+const themeIconSun = document.getElementById('theme-icon-sun')
+
+function getTheme () {
+  return document.documentElement.getAttribute('data-theme') || 'dark'
+}
+
+function setTheme (theme) {
+  document.documentElement.setAttribute('data-theme', theme)
+  localStorage.setItem('isu-imse-theme', theme)
+  if (themeBtn) {
+    themeBtn.setAttribute(
+      'title',
+      theme === 'dark' ? 'Switch to Light Mode' : 'Switch to Dark Mode'
+    )
+  }
+  if (themeIconMoon && themeIconSun) {
+    if (theme === 'dark') {
+      themeIconSun.style.display = 'block'
+      themeIconMoon.style.display = 'none'
+    } else {
+      themeIconSun.style.display = 'none'
+      themeIconMoon.style.display = 'block'
+    }
+  }
+  if (currentResult) {
+    renderHeatmap(currentResult)
+    renderVariogram(currentResult)
+  }
+}
+
+function initTheme () {
+  const saved = localStorage.getItem('isu-imse-theme') || 'dark'
+  setTheme(saved)
+  if (themeBtn) {
+    themeBtn.addEventListener('click', () => {
+      const current = getTheme()
+      setTheme(current === 'dark' ? 'light' : 'dark')
+    })
+  }
+}
+
+const dropzoneReplaceBtn = document.getElementById('dropzone-replace-btn')
 
 function updateDropzoneFileDisplay (file, extraInfo) {
   if (!dropzone) return
@@ -37,11 +81,11 @@ function updateDropzoneFileDisplay (file, extraInfo) {
     if (dropzoneHint) {
       dropzoneHint.textContent = `${sizeStr}${
         extraInfo ? ' • ' + extraInfo : ''
-      } • Click or drag to replace`
+      }`
     }
   } else {
     dropzone.classList.remove('has-file')
-    if (dropzoneText) dropzoneText.textContent = 'Load 3D Scan'
+    if (dropzoneText) dropzoneText.textContent = 'Select or Drag 3D Scan'
     if (dropzoneHint) dropzoneHint.textContent = 'PLY, PCD, STL, OBJ, CSV, XYZ'
   }
 }
@@ -133,17 +177,13 @@ function renderResults (res) {
   const patchOk = patchW >= 50.0 && patchH >= 50.0
   const patchBadge = document.getElementById('ribbon-patch')
   patchBadge.className = 'badge ' + (patchOk ? 'badge-pass' : 'badge-warn')
-  patchBadge.innerHTML = `${patchW.toFixed(1)} &times; ${patchH.toFixed(
-    1
-  )} mm ${patchOk ? '(ASTM Pass)' : '(&lt; 50 mm standard)'}`
+  patchBadge.textContent = `${patchW.toFixed(1)} × ${patchH.toFixed(1)} mm`
 
   const spacing = res.average_point_spacing_mm
   const spacingOk = spacing <= 0.2
   const spacingBadge = document.getElementById('ribbon-pitch')
   spacingBadge.className = 'badge ' + (spacingOk ? 'badge-pass' : 'badge-warn')
-  spacingBadge.innerHTML = `${spacing.toFixed(3)} mm ${
-    spacingOk ? '(ASTM Pass)' : '(&gt; 0.20 mm)'
-  }`
+  spacingBadge.textContent = `${spacing.toFixed(3)} mm`
 
   const timings = res.timings || {}
   const totalSec = ((timings.total_ms || 0) / 1000.0).toFixed(2)
@@ -151,9 +191,6 @@ function renderResults (res) {
 
   // KPI Card
   document.getElementById('kpi-svr').textContent = formatVal(res.svr_um, unit)
-  document.getElementById('kpi-svr-sub').textContent = `${res.svr_mm.toFixed(
-    4
-  )} mm • ${res.svr_um.toFixed(2)} µm • ${res.svr_in.toFixed(5)} in`
   document.getElementById('kpi-sa').textContent = formatVal(res.sa_um, unit)
   document.getElementById('kpi-sq').textContent = formatVal(res.sq_um, unit)
   document.getElementById('kpi-points').textContent =
@@ -170,24 +207,21 @@ function renderResults (res) {
   const comps = res.comparators || {}
   const rows = [
     {
-      std: 'SCRATA (ASTM A802, Appendix X2)',
-      rating: comps['SCRATA (ASTM A802)'] || 'N/A',
-      ref: 'Cast steel comparator plates (A1–A4)'
+      std: 'SCRATA (ASTM A802)',
+      rating: comps['SCRATA (ASTM A802)'] || 'N/A'
     },
     {
-      std: 'GAR C-9 (Appendix X1)',
-      rating: comps['GAR C-9'] || 'N/A',
-      ref: 'Microfinish comparator (200–900)'
+      std: 'GAR C-9',
+      rating: comps['GAR C-9'] || 'N/A'
     },
     {
-      std: 'ACI Surface Indicator (Appendix X3)',
-      rating: comps['ACI SIS'] || 'N/A',
-      ref: 'Alloy Casting Institute scale (SIS-1–SIS-4)'
+      std: 'ACI SIS',
+      rating: comps['ACI SIS'] || 'N/A'
     }
   ]
   rows.forEach(r => {
     const tr = document.createElement('tr')
-    tr.innerHTML = `<td>${r.std}</td><td>${r.rating}</td><td>${r.ref}</td>`
+    tr.innerHTML = `<td>${r.std}</td><td>${r.rating}</td>`
     compTbody.appendChild(tr)
   })
 
@@ -245,6 +279,11 @@ function renderHeatmap (res) {
   const yCoords = []
   for (let r = 0; r < res.grid_height; r++) yCoords.push(originY + r * pitch)
 
+  const isDark = getTheme() === 'dark'
+  const chartBg = isDark ? '#1c1d22' : '#ffffff'
+  const chartText = isDark ? '#c7cbd3' : '#0f172a'
+  const tickColor = isDark ? '#8e94a0' : '#475569'
+
   const trace = {
     z: zData,
     x: xCoords,
@@ -258,24 +297,35 @@ function renderHeatmap (res) {
       title: `S_VR (${unit})`,
       len: 0.95,
       thickness: 16,
-      tickfont: { size: 11, family: 'Inter, sans-serif' }
+      tickfont: { size: 11, color: chartText }
     },
     hovertemplate: `X: %{x:.2f} mm<br>Y: %{y:.2f} mm<br>Local S_VR: %{z:.4f} ${unit}<extra></extra>`
   }
 
   const layout = {
-    height: 520,
-    margin: { l: 40, r: 20, t: 20, b: 40 },
-    xaxis: { title: 'Surface X (mm)', showgrid: false },
+    height: 500,
+    margin: { l: 45, r: 20, t: 20, b: 45 },
+    xaxis: {
+      title: 'Surface X (mm)',
+      showgrid: false,
+      color: chartText,
+      tickcolor: tickColor
+    },
     yaxis: {
       title: 'Surface Y (mm)',
       showgrid: false,
       scaleanchor: 'x',
-      scaleratio: 1
+      scaleratio: 1,
+      color: chartText,
+      tickcolor: tickColor
     },
-    plot_bgcolor: 'rgba(0,0,0,0)',
-    paper_bgcolor: 'rgba(0,0,0,0)',
-    font: { family: 'Inter, sans-serif', color: '#cbd5e1' }
+    plot_bgcolor: chartBg,
+    paper_bgcolor: chartBg,
+    font: {
+      family:
+        '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+      color: chartText
+    }
   }
 
   Plotly.newPlot('chart-container', [trace], layout, {
@@ -285,6 +335,13 @@ function renderHeatmap (res) {
 }
 
 function renderVariogram (res) {
+  const isDark = getTheme() === 'dark'
+  const chartBg = isDark ? '#1c1d22' : '#ffffff'
+  const chartText = isDark ? '#c7cbd3' : '#0f172a'
+  const chartGrid = isDark ? '#282a31' : '#e2e8f0'
+  const tickColor = isDark ? '#8e94a0' : '#475569'
+  const varColor = isDark ? '#d93848' : '#a6192e'
+
   const unit = unitSelect.value
   const bins = res.var_bins || []
   const distances = bins.map((_, idx) => idx * 0.5 + 0.25)
@@ -298,27 +355,35 @@ function renderVariogram (res) {
     x: distances,
     y: binVals,
     mode: 'lines+markers',
-    marker: { size: 6, color: '#38bdf8' },
-    line: { width: 2, color: '#38bdf8' },
+    marker: { size: 5, color: varColor },
+    line: { width: 2, color: varColor },
     hovertemplate: `Distance: %{x:.2f} mm<br>v(d): %{y:.4f} ${unit}<extra></extra>`
   }
 
   const layout = {
     height: 280,
-    margin: { l: 40, r: 20, t: 15, b: 40 },
+    margin: { l: 45, r: 20, t: 15, b: 45 },
     xaxis: {
       title: 'Distance Bucket Center d (mm)',
       showgrid: true,
-      gridcolor: 'rgba(255,255,255,0.1)'
+      gridcolor: chartGrid,
+      color: chartText,
+      tickcolor: tickColor
     },
     yaxis: {
       title: `Roughness v(d) (${unit})`,
       showgrid: true,
-      gridcolor: 'rgba(255,255,255,0.1)'
+      gridcolor: chartGrid,
+      color: chartText,
+      tickcolor: tickColor
     },
-    plot_bgcolor: 'rgba(0,0,0,0)',
-    paper_bgcolor: 'rgba(0,0,0,0)',
-    font: { family: 'Inter, sans-serif', color: '#cbd5e1' }
+    plot_bgcolor: chartBg,
+    paper_bgcolor: chartBg,
+    font: {
+      family:
+        '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+      color: chartText
+    }
   }
 
   Plotly.newPlot('variogram-chart', [trace], layout, {
@@ -329,6 +394,12 @@ function renderVariogram (res) {
 
 // Event Listeners
 dropzone.addEventListener('click', () => fileInput.click())
+if (dropzoneReplaceBtn) {
+  dropzoneReplaceBtn.addEventListener('click', e => {
+    e.stopPropagation()
+    fileInput.click()
+  })
+}
 fileInput.addEventListener('change', e => handleFileSelect(e.target.files[0]))
 
 dropzone.addEventListener('dragover', e => {
@@ -393,10 +464,11 @@ downloadBtn.addEventListener('click', () => {
   const a = document.createElement('a')
   a.href = url
   const name = (currentResult.effective_name || 'inspection').split('.')[0]
-  a.download = `ASTM_WK92969_${name}.txt`
+  a.download = `roughness_report_${name}.txt`
   a.click()
   URL.revokeObjectURL(url)
 })
 
 // Initialize on page load
+initTheme()
 initWorker()

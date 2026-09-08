@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>S_VR Surface Roughness Metrology | ASTM WK92969</title>
+    <title>Surface Roughness Analysis | HAM Lab</title>
     <link rel="stylesheet" href="style.css" />
     <!-- Plotly.js for interactive WebGL 2D Heatmap & charts -->
     <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
@@ -12,10 +12,18 @@
     <div class="app-container">
       <!-- Sidebar -->
       <aside class="sidebar">
+        <div class="sidebar-brand">
+          <div class="brand-dot"></div>
+          <span class="brand-univ">HAM Lab &bull; Iowa State IMSE</span>
+        </div>
+
         <div>
           <div class="dropzone" id="dropzone">
-            <div class="dropzone-text" id="dropzone-text">Load 3D Scan</div>
-            <div class="dropzone-hint" id="dropzone-hint">PLY, PCD, STL, OBJ, CSV, XYZ</div>
+            <div class="dropzone-file-info">
+              <div class="dropzone-text" id="dropzone-text">Select or Drag 3D Scan</div>
+              <div class="dropzone-hint" id="dropzone-hint">PLY, PCD, STL, OBJ, CSV, XYZ</div>
+            </div>
+            <button type="button" class="dropzone-replace-btn" id="dropzone-replace-btn">Change</button>
             <input type="file" id="file-input" style="display: none;" accept=".ply,.pcd,.stl,.obj,.csv,.tsv,.xyz,.txt,.npy,.npz,.gz,.zip" />
           </div>
           <div class="progress-bar" id="progress-bar">
@@ -33,10 +41,10 @@
         </div>
 
         <details class="standards-panel" id="standards-panel">
-          <summary>Filtration &amp; Sampling Parameters (ISO 16610-61 / ASTM WK92969)</summary>
+          <summary>Filtration &amp; Grid Parameters</summary>
           <div class="panel-content">
             <div class="form-group">
-              <label class="form-label" for="grid-pitch">Grid Pitch / Downsample (mm)</label>
+              <label class="form-label" for="grid-pitch">Grid Pitch (mm)</label>
               <input type="number" id="grid-pitch" class="form-input" value="0.20" step="0.05" min="0.01" />
             </div>
             <div class="form-group">
@@ -49,7 +57,7 @@
             </div>
             <div style="display: flex; align-items: center; gap: 0.5rem; margin-top: 0.25rem;">
               <input type="checkbox" id="gaussian-mesh" checked />
-              <label for="gaussian-mesh" class="form-label" style="font-size: 0.78rem;">ISO 16610-61 Gaussian Form Removal</label>
+              <label for="gaussian-mesh" class="form-label" style="font-size: 0.78rem;">Gaussian Form Removal</label>
             </div>
           </div>
         </details>
@@ -80,16 +88,36 @@
 
       <!-- Main Content -->
       <main class="main-content">
-        <header>
-          <h1 class="main-header">S<sub>VR</sub> Surface Roughness Metrology</h1>
-          <p class="sub-header">ASTM WK92969 Digital Surface Inspection Standard &bull; ISO 16610-61 Gaussian Areal Filtration</p>
+        <header class="main-header-row">
+          <div>
+            <h1 class="main-header">Surface Roughness Analysis</h1>
+            <p class="sub-header">HAM Lab &bull; Iowa State IMSE</p>
+          </div>
+          <div>
+            <button id="theme-btn" class="theme-icon-btn" type="button" aria-label="Toggle theme" title="Switch to Light Mode">
+              <svg id="theme-icon-sun" class="theme-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="5"></circle>
+                <line x1="12" y1="1" x2="12" y2="3"></line>
+                <line x1="12" y1="21" x2="12" y2="23"></line>
+                <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+                <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+                <line x1="1" y1="12" x2="3" y2="12"></line>
+                <line x1="21" y1="12" x2="23" y2="12"></line>
+                <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+                <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+              </svg>
+              <svg id="theme-icon-moon" class="theme-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display: none;">
+                <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
+              </svg>
+            </button>
+          </div>
         </header>
 
         <!-- Empty State Prompt -->
-        <div id="empty-state" style="padding: 4rem 2rem; text-align: center; background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 2px;">
+        <div id="empty-state">
           <h2 style="font-size: 1.05rem; font-weight: 600; margin-bottom: 0.35rem; color: var(--text-main);">No Surface Scan Loaded</h2>
           <p style="font-size: 0.84rem; color: var(--text-muted); max-width: 440px; margin: 0 auto;">
-            Select or drag a 3D point cloud file (.ply, .pcd, .stl, .csv) in the sidebar to begin ASTM WK92969 inspection.
+            Select or drag a 3D point cloud file (.ply, .pcd, .stl, .csv) in the sidebar to begin inspection.
           </p>
         </div>
 
@@ -102,16 +130,16 @@
               <span class="ribbon-value" id="ribbon-filename">-</span>
             </div>
             <div class="ribbon-item">
-              <span class="ribbon-label">Evaluation Area:</span>
+              <span class="ribbon-label">Area:</span>
               <span class="badge" id="ribbon-patch">-</span>
             </div>
             <div class="ribbon-item">
-              <span class="ribbon-label">Mean Point Pitch:</span>
+              <span class="ribbon-label">Pitch:</span>
               <span class="badge" id="ribbon-pitch">-</span>
             </div>
             <div class="ribbon-item" style="margin-left: auto;">
-              <span class="ribbon-label">Calculation Time:</span>
-              <span class="ribbon-value" style="color: var(--accent-cyan);" id="ribbon-timing">-</span>
+              <span class="ribbon-label">Time:</span>
+              <span class="ribbon-value" style="color: var(--primary);" id="ribbon-timing">-</span>
             </div>
           </div>
 
@@ -124,7 +152,6 @@
             <div class="kpi-card">
               <div class="kpi-title">Surface Variogram Roughness (S<sub>VR</sub>)</div>
               <div class="kpi-value-primary" id="kpi-svr">-</div>
-              <div class="kpi-value-sub" id="kpi-svr-sub">-</div>
 
               <div class="sec-metric">
                 <span class="sec-label">Arithmetic Mean (Sa)</span>
@@ -152,18 +179,17 @@
           <!-- Structured Tabs -->
           <div class="tabs-container">
             <div class="tab-nav">
-              <button class="tab-btn active" data-tab="tab-comp">Visual Comparators (SCRATA / GAR / ACI)</button>
-              <button class="tab-btn" data-tab="tab-var">Areal Variogram Curve v(d)</button>
-              <button class="tab-btn" data-tab="tab-rep">ASTM WK92969 Inspection Certificate</button>
+              <button class="tab-btn active" data-tab="tab-comp">Comparators</button>
+              <button class="tab-btn" data-tab="tab-var">Variogram</button>
+              <button class="tab-btn" data-tab="tab-rep">Report</button>
             </div>
 
             <div class="tab-content active" id="tab-comp">
               <table class="data-table">
                 <thead>
                   <tr>
-                    <th>Standard / Reference</th>
+                    <th>Standard</th>
                     <th>Visual Rating</th>
-                    <th>Reference Type</th>
                   </tr>
                 </thead>
                 <tbody id="comparator-tbody"></tbody>
@@ -176,7 +202,7 @@
 
             <div class="tab-content" id="tab-rep">
               <div class="report-view" id="report-pre"></div>
-              <button class="btn" id="download-report-btn">Export Inspection Certificate (.txt)</button>
+              <button class="btn" id="download-report-btn">Download Report (.txt)</button>
             </div>
           </div>
         </div>
