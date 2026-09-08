@@ -1,7 +1,6 @@
 # SVR Roughness Heatmap
 
-Streamlit application for calculating and displaying a SurfInspect-compatible
-surface roughness heatmap using the `svr-roughness` package.
+Application for calculating and displaying a surface roughness heatmap using the `svr-roughness` package.
 
 ## Supported files
 
@@ -19,10 +18,9 @@ streamlit run app.py
 ```
 
 The app opens in the browser. Upload a scan, choose the grid and filter
-parameters, and inspect a spatial Svr heatmap. Each cell shows local Svr in micrometers,
+parameters, and inspect a spatial Svr heatmap. Each cell shows local Svr,
 calculated from neighboring height differences using the same variogram
 definition as the package-wide Svr metric. The sidebar also reports global Sa,
 Sq, and Svr.
 
-The roughness algorithm and units are provided by `svr-roughness`; this app
-does not duplicate or alter the SurfInspect-derived math.
+The roughness algorithm and units are provided by `svr-roughness`.
