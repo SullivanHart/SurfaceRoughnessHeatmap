@@ -344,21 +344,30 @@ function renderResults (res) {
 }
 
 function renderHeatmap (res) {
+  if (
+    !res ||
+    !res.grid_svr ||
+    !Array.isArray(res.grid_svr) ||
+    res.grid_svr.length === 0
+  ) {
+    console.warn('renderHeatmap: No grid_svr data provided in results', res)
+    return
+  }
   const unit = unitSelect.value
   const grid = res.grid_svr
   const robust = robustCheckbox.checked
   const palette = paletteSelect.value
 
-  const originX = res.origin_x
-  const originY = res.origin_y
-  const pitch = res.pitch_mm
+  const originX = typeof res.origin_x === 'number' ? res.origin_x : 0
+  const originY = typeof res.origin_y === 'number' ? res.origin_y : 0
+  const pitch = typeof res.pitch_mm === 'number' ? res.pitch_mm : 0.2
 
   // Flatten and filter for percentiles
   let flat = []
   for (let r = 0; r < grid.length; r++) {
     for (let c = 0; c < grid[r].length; c++) {
       let v = grid[r][c]
-      if (!isNaN(v) && v !== null) {
+      if (typeof v === 'number' && !isNaN(v)) {
         if (unit === 'mm') v /= 1000.0
         else if (unit === 'in') v /= 25400.0
         flat.push(v)
@@ -367,8 +376,8 @@ function renderHeatmap (res) {
   }
   flat.sort((a, b) => a - b)
 
-  let zmin = flat[0]
-  let zmax = flat[flat.length - 1]
+  let zmin = flat.length > 0 ? flat[0] : 0
+  let zmax = flat.length > 0 ? flat[flat.length - 1] : 1
   if (robust && flat.length > 20) {
     zmin = flat[Math.floor(flat.length * 0.01)]
     zmax = flat[Math.floor(flat.length * 0.99)]
@@ -377,17 +386,20 @@ function renderHeatmap (res) {
   // Convert grid units
   const zData = grid.map(row =>
     row.map(v => {
-      if (isNaN(v) || v === null) return null
+      if (typeof v !== 'number' || isNaN(v)) return null
       if (unit === 'mm') return v / 1000.0
       if (unit === 'in') return v / 25400.0
       return v
     })
   )
 
+  const numCols = res.grid_width || (grid[0] ? grid[0].length : 0)
+  const numRows = res.grid_height || grid.length
+
   const xCoords = []
-  for (let c = 0; c < res.grid_width; c++) xCoords.push(originX + c * pitch)
+  for (let c = 0; c < numCols; c++) xCoords.push(originX + c * pitch)
   const yCoords = []
-  for (let r = 0; r < res.grid_height; r++) yCoords.push(originY + r * pitch)
+  for (let r = 0; r < numRows; r++) yCoords.push(originY + r * pitch)
 
   const isDark = getTheme() === 'dark'
   const chartBg = isDark ? '#1c1d22' : '#ffffff'
@@ -445,6 +457,12 @@ function renderHeatmap (res) {
 }
 
 function renderVariogram (res) {
+  const bins = res.var_bins || res.variogram_bins || []
+  if (!bins || bins.length === 0) {
+    console.warn('renderVariogram: No var_bins data provided in results', res)
+    return
+  }
+
   const isDark = getTheme() === 'dark'
   const chartBg = isDark ? '#1c1d22' : '#ffffff'
   const chartText = isDark ? '#c7cbd3' : '#0f172a'
@@ -453,7 +471,6 @@ function renderVariogram (res) {
   const varColor = isDark ? '#d93848' : '#a6192e'
 
   const unit = unitSelect.value
-  const bins = res.var_bins || []
   const distances = bins.map((_, idx) => idx * 0.5 + 0.25)
   const binVals = bins.map(v => {
     if (unit === 'mm') return v / 1000.0
