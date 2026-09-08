@@ -1,26 +1,30 @@
-# SVR Roughness Heatmap
+# SurfInspect Web
 
-Application for calculating and displaying a surface roughness heatmap using the `svr-roughness` package.
+Interactive surface roughness inspector and heatmap visualizer based on ASTM WK92969, powered entirely in the browser using WebAssembly (Pyodide) and the [`svr-roughness`](https://pypi.org/project/svr-roughness/) package.
 
-## Supported files
+## Features
 
-All formats supported by `svr-roughness`: PLY, PCD, STL, OBJ, CSV, TSV, XYZ,
-TXT, NPY, and NPZ.
+- **100% Client-Side**: No server required. Point cloud processing runs in a dedicated Web Worker via Pyodide, pulling the latest `svr-roughness` wheel directly from PyPI.
+- **ASTM WK92969 Standard Metrics**: Computes areal surface roughness parameters ($S_a$, $S_q$, and $S_{vr}$ via semi-variogram analysis).
+- **Comparator Cross-Checks**: Automatic rating against casting & concrete standards including SCRATA (ASTM A802), GAR C-9, and ACI SIS.
+- **Multi-Format Support**: Reads `.ply`, `.stl`, `.obj`, `.pcd`, `.xyz`, `.csv`, `.tsv`, `.txt`, `.npy`, `.npz`, as well as `.gz` and `.zip` archives.
+- **Interactive Visualizations**: 3D surface depth rendering with Plotly.js, spatial roughness heatmaps, and experimental variogram curves.
 
-## Run
+## Running Locally
 
-```powershell
-cd "C:\Users\User\Desktop\Research\surface roughness\heatmap"
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-streamlit run app.py
+Serve the directory with any local static HTTP server:
+
+```bash
+# Python
+python -m http.server 8000
+
+# or Node
+npx serve .
 ```
 
-The app opens in the browser. Upload a scan, choose the grid and filter
-parameters, and inspect a spatial Svr heatmap. Each cell shows local Svr,
-calculated from neighboring height differences using the same variogram
-definition as the package-wide Svr metric. The sidebar also reports global Sa,
-Sq, and Svr.
+Then open `http://localhost:8000` in any modern browser (Chrome, Edge, Firefox, Safari).
 
-The roughness algorithm and units are provided by `svr-roughness`.
+## Deployment
+
+Configured for zero-config deployment to Cloudflare Pages via `wrangler.toml`.
+

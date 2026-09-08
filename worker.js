@@ -1,26 +1,29 @@
 // Surface Roughness Analysis Background Web Worker
-importScripts("https://cdn.jsdelivr.net/pyodide/v0.27.2/full/pyodide.js");
+importScripts('https://cdn.jsdelivr.net/pyodide/v0.27.2/full/pyodide.js')
 
-let pyodideReady = false;
-let pyodide = null;
+let pyodideReady = false
+let pyodide = null
 
-self.reportProgress = function(percent, text) {
-  self.postMessage({ type: "progress", percent: percent, text: text });
-};
+self.reportProgress = function (percent, text) {
+  self.postMessage({ type: 'progress', percent: percent, text: text })
+}
 
-async function initPyodide() {
+async function initPyodide () {
   try {
-    postMessage({ type: "status", text: "Initializing runtime..." });
+    postMessage({ type: 'status', text: 'Initializing runtime...' })
     pyodide = await loadPyodide({
-      indexURL: "https://cdn.jsdelivr.net/pyodide/v0.27.2/full/"
-    });
+      indexURL: 'https://cdn.jsdelivr.net/pyodide/v0.27.2/full/'
+    })
 
-    postMessage({ type: "status", text: "Loading numerical packages..." });
-    await pyodide.loadPackage(["numpy", "scipy", "micropip"]);
+    postMessage({ type: 'status', text: 'Loading numerical packages...' })
+    await pyodide.loadPackage(['numpy', 'scipy', 'micropip'])
 
-    postMessage({ type: "status", text: "Installing latest svr-roughness from PyPI..." });
-    const micropip = pyodide.pyimport("micropip");
-    await micropip.install("svr-roughness");
+    postMessage({
+      type: 'status',
+      text: 'Installing latest svr-roughness from PyPI...'
+    })
+    const micropip = pyodide.pyimport('micropip')
+    await micropip.install('svr-roughness')
 
     // Setup Python analysis helper
     pyodide.runPython(`
@@ -87,7 +90,7 @@ def run_analysis_payload(file_path_str, file_name, grid_mm, short_cutoff_mm, lon
             scan_path.unlink()
 
     t_load = time.perf_counter()
-    report(36, f"Downsampling {len(pts):,} points...")
+    report(36, f"Analyzing {len(pts):,} points (ASTM WK92969)...")
     res = analyze_pure_python(
         pts,
         voxel_size_mm=grid_mm,
@@ -95,7 +98,6 @@ def run_analysis_payload(file_path_str, file_name, grid_mm, short_cutoff_mm, lon
         long_cutoff_mm=long_cutoff_mm,
         variogram_points=10,
         variogram_span_mm=0.5,
-        progress_callback=report,
     )
     t_analyze = time.perf_counter()
 
@@ -206,48 +208,55 @@ def run_analysis_payload(file_path_str, file_name, grid_mm, short_cutoff_mm, lon
         }
     }
     return json.dumps(out)
-`);
+`)
 
-    pyodideReady = true;
-    postMessage({ type: "ready" });
+    pyodideReady = true
+    postMessage({ type: 'ready' })
   } catch (err) {
-    postMessage({ type: "error", error: err.message || err.toString() });
+    postMessage({ type: 'error', error: err.message || err.toString() })
   }
 }
 
-self.onmessage = async function(e) {
-  const { type, payload } = e.data;
-  if (type === "init") {
-    if (!pyodideReady) await initPyodide();
-    else postMessage({ type: "ready" });
-  } else if (type === "analyze") {
+self.onmessage = async function (e) {
+  const { type, payload } = e.data
+  if (type === 'init') {
+    if (!pyodideReady) await initPyodide()
+    else postMessage({ type: 'ready' })
+  } else if (type === 'analyze') {
     if (!pyodideReady) {
-      await initPyodide();
+      await initPyodide()
     }
     try {
-      const { fileData, fileName, grid_mm, short_cutoff_mm, long_cutoff_mm, gaussian_mesh } = payload;
-      
-      const ext = fileName.includes(".") ? "." + fileName.split(".").pop() : "";
-      const uint8 = new Uint8Array(fileData);
-      const filePath = "/home/pyodide/input_scan" + ext;
-      pyodide.FS.writeFile(filePath, uint8);
+      const {
+        fileData,
+        fileName,
+        grid_mm,
+        short_cutoff_mm,
+        long_cutoff_mm,
+        gaussian_mesh
+      } = payload
 
-      pyodide.globals.set("_file_path", filePath);
-      pyodide.globals.set("_file_name", fileName);
-      pyodide.globals.set("_grid_mm", grid_mm);
-      pyodide.globals.set("_short_cutoff_mm", short_cutoff_mm);
-      pyodide.globals.set("_long_cutoff_mm", long_cutoff_mm);
-      pyodide.globals.set("_gaussian_mesh", gaussian_mesh);
+      const ext = fileName.includes('.') ? '.' + fileName.split('.').pop() : ''
+      const uint8 = new Uint8Array(fileData)
+      const filePath = '/home/pyodide/input_scan' + ext
+      pyodide.FS.writeFile(filePath, uint8)
+
+      pyodide.globals.set('_file_path', filePath)
+      pyodide.globals.set('_file_name', fileName)
+      pyodide.globals.set('_grid_mm', grid_mm)
+      pyodide.globals.set('_short_cutoff_mm', short_cutoff_mm)
+      pyodide.globals.set('_long_cutoff_mm', long_cutoff_mm)
+      pyodide.globals.set('_gaussian_mesh', gaussian_mesh)
 
       const jsonStr = pyodide.runPython(`
 run_analysis_payload(_file_path, _file_name, _grid_mm, _short_cutoff_mm, _long_cutoff_mm, _gaussian_mesh)
-`);
-      const result = JSON.parse(jsonStr);
-      postMessage({ type: "result", data: result });
+`)
+      const result = JSON.parse(jsonStr)
+      postMessage({ type: 'result', data: result })
     } catch (err) {
-      postMessage({ type: "error", error: err.message || err.toString() });
+      postMessage({ type: 'error', error: err.message || err.toString() })
     }
   }
-};
+}
 
-initPyodide();
+initPyodide()
