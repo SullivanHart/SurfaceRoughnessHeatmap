@@ -1,14 +1,17 @@
 from __future__ import annotations
 
+import gzip
+import io
 import tempfile
 import time
+import zipfile
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
-import streamlit.components.v1 as components
 
 from svr_roughness import (
     RoughnessConfig,
@@ -18,7 +21,8 @@ from svr_roughness import (
     svr_map,
 )
 
-SUPPORTED_TYPES = ["ply", "pcd", "stl", "obj", "csv", "tsv", "xyz", "txt", "npy", "npz"]
+SUPPORTED_TYPES = ["ply", "pcd", "stl", "obj", "csv", "tsv", "xyz", "txt", "npy", "npz", "gz", "zip"]
+SCAN_EXTENSIONS = {".ply", ".pcd", ".stl", ".obj", ".csv", ".tsv", ".xyz", ".txt", ".npy", ".npz"}
 COLOR_SCALES = ["Jet", "Turbo", "Viridis", "Plasma", "Inferno", "Rainbow"]
 UNITS = ["µm", "mm", "in"]
 
@@ -148,6 +152,97 @@ st.markdown(
 )
 
 
+def extract_scan_payload(
+    raw_bytes: bytes,
+    file_name: str,
+) -> tuple[bytes, str, dict[str, Any]]:
+    """Detect compression containers (gzip/zip) and decompress transparently in RAM.
+
+    Returns:
+        (decompressed_bytes, effective_file_name, metadata)
+    """
+    t0 = time.perf_counter()
+    lower_name = file_name.lower()
+
+    # GZIP magic bytes: 0x1f 0x8b
+    if raw_bytes.startswith(b"\x1f\x8b"):
+        decompressed = gzip.decompress(raw_bytes)
+        dt_ms = (time.perf_counter() - t0) * 1000.0
+        effective_name = file_name[:-3] if lower_name.endswith(".gz") else file_name
+        orig_sz = len(decompressed)
+        comp_sz = len(raw_bytes)
+        meta = {
+            "container": "gzip",
+            "compressed_bytes": comp_sz,
+            "uncompressed_bytes": orig_sz,
+            "decompress_time_ms": dt_ms,
+            "ratio_pct": ((orig_sz - comp_sz) / max(orig_sz, 1)) * 100.0,
+        }
+        return decompressed, effective_name, meta
+
+    # ZIP magic bytes: PK\x03\x04
+    if raw_bytes.startswith(b"PK\x03\x04"):
+        with zipfile.ZipFile(io.BytesIO(raw_bytes)) as zf:
+            candidates = [
+                name for name in zf.namelist()
+                if not name.startswith("__MACOSX")
+                and not Path(name).name.startswith(".")
+                and Path(name).suffix.lower() in SCAN_EXTENSIONS
+            ]
+            if not candidates:
+                raise ValueError("Zip archive contains no supported 3D scan files (.ply, .pcd, .stl, etc.)")
+            target_name = candidates[0]
+            decompressed = zf.read(target_name)
+            dt_ms = (time.perf_counter() - t0) * 1000.0
+            orig_sz = len(decompressed)
+            comp_sz = len(raw_bytes)
+            meta = {
+                "container": "zip",
+                "compressed_bytes": comp_sz,
+                "uncompressed_bytes": orig_sz,
+                "decompress_time_ms": dt_ms,
+                "ratio_pct": ((orig_sz - comp_sz) / max(orig_sz, 1)) * 100.0,
+            }
+            return decompressed, Path(target_name).name, meta
+
+    # Raw uncompressed
+    meta = {
+        "container": "none",
+        "compressed_bytes": len(raw_bytes),
+        "uncompressed_bytes": len(raw_bytes),
+        "decompress_time_ms": 0.0,
+        "ratio_pct": 0.0,
+    }
+    return raw_bytes, file_name, meta
+
+
+def generate_inspection_report(result: RoughnessResult, unit: str) -> str:
+    """Format ASTM WK92969 inspection report with minimum compliant S_VR or N/A."""
+    base_report = format_report(result)
+    patch_ok = (result.patch_width_mm >= 50.0 and result.patch_height_mm >= 50.0)
+    density_ok = (result.average_point_spacing_mm <= 0.20)
+    is_valid = patch_ok and density_ok
+
+    if not is_valid:
+        compliance_text = (
+            "  Specification Compliance (§5.3): N/A\n"
+            "  Compliance Status:              INVALID (Specimen fails ASTM WK92969 patch size or point pitch criteria)\n"
+        )
+    else:
+        svr_str = format_unit_val(result.svr_um, unit)
+        compliance_text = (
+            f"  Specification Compliance (§5.3): S_VR <= {svr_str} ({result.svr_mm:.4f} mm / {result.svr_in:.5f} in)\n"
+            f"  Compliance Status:              COMPLIANT (Minimum allowable S_VR specification threshold satisfied)\n"
+        )
+
+    next_marker = "§10.1.2  Evaluation Length"
+    if next_marker in base_report:
+        parts = base_report.split(next_marker, 1)
+        return parts[0] + compliance_text + "\n" + next_marker + parts[1]
+
+    return base_report + "\n" + compliance_text
+
+
 def main() -> None:
     st.markdown('<div class="main-header">S<sub>VR</sub> Surface Roughness Metrology</div>', unsafe_allow_html=True)
     st.markdown(
@@ -164,15 +259,6 @@ def main() -> None:
             UNITS,
             index=0,
             help="Select display unit for roughness values and colorbar scales.",
-        )
-
-        target_svr_input = st.number_input(
-            f"Acceptance Limit $S_{{VR}}$ ({selected_unit})",
-            min_value=0.0,
-            value=0.0,
-            step=0.005 if selected_unit == "mm" else (5.0 if selected_unit == "µm" else 0.0002),
-            format="%.4f" if selected_unit in ("mm", "in") else "%.2f",
-            help="ASTM WK92969 §5.3 specification threshold. Specimen passes if S_VR <= limit. Set 0.0 to disable.",
         )
 
         with st.expander("Filter & Sampling Standards", expanded=False):
@@ -210,34 +296,12 @@ def main() -> None:
             value=True,
             help="Suppresses outlier boundary spikes to preserve micro-roughness dynamic range.",
         )
-        smooth_display = st.checkbox(
-            "Bilinear Interpolation",
-            value=False,
-            help="Applies surface smoothing without modifying underlying numerical data.",
-        )
-        custom_max = st.number_input(
-            f"Fixed Colorbar Ceiling ({selected_unit})",
-            min_value=0.0,
-            value=0.0,
-            step=5.0 if selected_unit == "µm" else 0.01,
-            help="Fixes the maximum scale across multiple scans. Set 0.0 for auto-scale.",
-        )
 
     if uploaded_file is None:
-        for k in ["current_scan_result", "current_svr_grid_um", "scan_upload_id", "filter_signature", "last_analysis_time"]:
+        for k in ["current_scan_result", "current_svr_grid_um", "scan_upload_id", "filter_signature", "last_analysis_time", "effective_name"]:
             st.session_state.pop(k, None)
         st.info("Upload a 3D scan (.pcd, .ply, .stl, .csv) in the sidebar to begin inspection.")
         return
-
-    # Normalize target to millimeters for internal logic
-    target_svr_mm: float | None = None
-    if target_svr_input > 0:
-        if selected_unit == "µm":
-            target_svr_mm = target_svr_input / 1000.0
-        elif selected_unit == "in":
-            target_svr_mm = target_svr_input * 25.4
-        else:
-            target_svr_mm = target_svr_input
 
     # Unique upload identifier per file upload event in Streamlit
     upload_id = getattr(uploaded_file, "file_id", getattr(uploaded_file, "id", None))
@@ -256,17 +320,20 @@ def main() -> None:
 
     if need_analysis:
         t0 = time.perf_counter()
-        file_bytes = uploaded_file.getvalue()
+        raw_bytes = uploaded_file.getvalue()
+        file_bytes, effective_name, meta = extract_scan_payload(raw_bytes, uploaded_file.name)
+        decompress_time_s = meta.get("decompress_time_ms", 0.0) / 1000.0
 
         try:
             with st.spinner("Analyzing surface topography (ASTM WK92969)..."):
                 result, timings = run_analysis(
                     file_bytes,
-                    uploaded_file.name,
+                    effective_name,
                     grid_mm,
                     short_cutoff_mm,
                     long_cutoff_mm,
                     gaussian_mesh,
+                    decompress_time_s=decompress_time_s,
                 )
 
                 if result.grid.svr_map is not None:
@@ -291,6 +358,7 @@ def main() -> None:
             st.session_state["filter_signature"] = filter_sig
             st.session_state["last_analysis_time"] = total_time
             st.session_state["stage_timings"] = timings
+            st.session_state["effective_name"] = effective_name
         except Exception as exc:
             st.error(f"Analysis failed: {exc}")
             return
@@ -299,19 +367,16 @@ def main() -> None:
         svr_grid_um = st.session_state["current_svr_grid_um"]
         total_time = st.session_state.get("last_analysis_time", 0.0)
         timings = st.session_state.get("stage_timings")
+        effective_name = st.session_state.get("effective_name", uploaded_file.name)
 
     render_dashboard(
         result,
         svr_grid_um,
-        uploaded_file.name,
-        smooth_display,
+        effective_name,
         color_scale,
         robust_contrast,
-        custom_max,
         selected_unit,
-        target_svr_mm,
         total_time,
-        timings,
     )
 
 
@@ -322,6 +387,7 @@ def run_analysis(
     short_cutoff_mm: float,
     long_cutoff_mm: float,
     gaussian_mesh: bool,
+    decompress_time_s: float = 0.0,
 ) -> tuple[RoughnessResult, dict[str, float]]:
     t_start = time.perf_counter()
     suffix = Path(file_name).suffix.lower()
@@ -346,10 +412,11 @@ def run_analysis(
         t_analyze = time.perf_counter()
 
         timings = {
+            "decomp": decompress_time_s,
             "write": t_write - t_start,
             "load": t_load - t_write,
             "core": t_analyze - t_load,
-            "total": t_analyze - t_start,
+            "total": (t_analyze - t_start) + decompress_time_s,
         }
         return result, timings
     finally:
@@ -370,14 +437,10 @@ def render_dashboard(
     result: RoughnessResult,
     svr_grid_um: np.ndarray,
     file_name: str,
-    smooth_display: bool,
     color_scale: str,
     robust_contrast: bool,
-    custom_max: float,
     unit: str,
-    target_svr_mm: float | None,
     total_time: float,
-    timings: dict[str, float] | None = None,
 ) -> None:
     # ── Unit Conversion for 2D Grid ──
     if unit == "mm":
@@ -396,13 +459,7 @@ def render_dashboard(
     density_ok = (spacing <= 0.20)
 
     # ── Status Ribbon ──
-    if target_svr_mm is not None and target_svr_mm > 0:
-        passed = (result.svr_mm <= target_svr_mm)
-        status_badge = '<span class="badge badge-pass">Pass</span>' if passed else '<span class="badge badge-fail">Fail</span>'
-        spec_text = f"Target &le; {target_svr_mm:.4f} mm"
-    else:
-        status_badge = '<span class="badge badge-neutral">Inspected</span>'
-        spec_text = "No limit set"
+    svr_display = format_unit_val(result.svr_um, unit)
 
     patch_badge = (
         f'<span class="badge badge-pass">{patch_w:.1f} &times; {patch_h:.1f} mm</span>'
@@ -415,15 +472,6 @@ def render_dashboard(
         else f'<span class="badge badge-warn">{spacing:.3f} mm (&gt; 0.20 mm)</span>'
     )
 
-    timing_breakdown = ""
-    if timings and "core" in timings:
-        core_ms = timings["core"] * 1000.0
-        load_ms = timings.get("load", 0.0) * 1000.0
-        if core_ms < 1000.0:
-            timing_breakdown = f'<span style="color:#94a3b8; font-size:0.8rem; margin-left:0.4rem;">(C++ Core: {core_ms:.0f} ms | I/O: {load_ms:.0f} ms)</span>'
-        else:
-            timing_breakdown = f'<span style="color:#94a3b8; font-size:0.8rem; margin-left:0.4rem;">(C++: {timings["core"]:.2f}s | Load: {timings.get("load", 0.0):.2f}s)</span>'
-
     runtime_display = f"{total_time * 1000.0:.0f} ms" if total_time < 1.0 else f"{total_time:.2f}s"
 
     ribbon_html = f"""
@@ -433,9 +481,8 @@ def render_dashboard(
             <span class="ribbon-value">{file_name}</span>
         </div>
         <div class="ribbon-item">
-            <span class="ribbon-label">Conformance:</span>
-            {status_badge}
-            <span style="color:#94a3b8; font-size:0.8rem;">({spec_text})</span>
+            <span class="ribbon-label">S<sub>VR</sub>:</span>
+            <span class="ribbon-value" style="color:#38bdf8;">{svr_display}</span>
         </div>
         <div class="ribbon-item">
             <span class="ribbon-label">Patch Size (§3.1.5):</span>
@@ -448,7 +495,6 @@ def render_dashboard(
         <div class="ribbon-item" style="margin-left: auto;">
             <span class="ribbon-label">Runtime:</span>
             <span class="ribbon-value" style="color:#38bdf8;">{runtime_display}</span>
-            {timing_breakdown}
         </div>
     </div>
     """
@@ -459,7 +505,7 @@ def render_dashboard(
 
     with col_chart:
         st.plotly_chart(
-            build_figure(result, grid_display, smooth_display, color_scale, robust_contrast, custom_max, unit),
+            build_figure(result, grid_display, color_scale, robust_contrast, unit),
             width="stretch",
             config={"displaylogo": False},
         )
@@ -547,7 +593,7 @@ def render_dashboard(
         st.plotly_chart(fig_var, width="stretch", config={"displaylogo": False})
 
     with tab_rep:
-        report_text = format_report(result, target_svr_mm=target_svr_mm)
+        report_text = generate_inspection_report(result, unit)
         st.code(report_text, language="text")
 
         st.download_button(
@@ -561,26 +607,19 @@ def render_dashboard(
 def build_figure(
     result: RoughnessResult,
     grid: np.ndarray,
-    smooth_display: bool,
     color_scale: str,
     robust_contrast: bool,
-    custom_max: float,
     unit: str,
 ) -> go.Figure:
     origin_x, origin_y, pitch = result.grid.origin
     valid_vals = grid[~np.isnan(grid)] if np.any(~np.isnan(grid)) else np.array([0.0])
 
-    if custom_max > 0:
-        zmin = 0.0
-        zmax = custom_max
-    elif robust_contrast and len(valid_vals) > 0:
+    if robust_contrast and len(valid_vals) > 0:
         zmin = float(np.percentile(valid_vals, 1.0))
         zmax = float(np.percentile(valid_vals, 99.0))
     else:
         zmin = float(np.percentile(valid_vals, 0.5)) if len(valid_vals) > 0 else None
         zmax = float(np.percentile(valid_vals, 99.8)) if len(valid_vals) > 0 else None
-
-    zsmooth = "best" if smooth_display else False
 
     trace = go.Heatmap(
         z=grid,
@@ -589,7 +628,7 @@ def build_figure(
         colorscale=color_scale,
         zmin=zmin,
         zmax=zmax,
-        zsmooth=zsmooth,
+        zsmooth=False,
         colorbar={
             "title": f"S<sub>VR</sub> ({unit})",
             "len": 0.95,
