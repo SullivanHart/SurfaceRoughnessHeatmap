@@ -20,10 +20,10 @@ async function initPyodide () {
 
     postMessage({
       type: 'status',
-      text: 'Installing latest svr-roughness from PyPI...'
+      text: 'Installing svr-roughness 0.6.1 from PyPI...'
     })
     const micropip = pyodide.pyimport('micropip')
-    await micropip.install('svr-roughness')
+    await micropip.install('svr-roughness==0.6.1')
 
     // Setup Python analysis helper
     pyodide.runPython(`
@@ -43,10 +43,10 @@ def report(pct, text):
     except Exception:
         pass
 
-from svr_roughness.algorithm import analyze_pure_python
+from svr_roughness.algorithm import analyze_pure_python, compute_heatmap_grid
 from svr_roughness.config import RoughnessConfig
 from svr_roughness.io import load_points
-from svr_roughness.result import format_report, RoughnessResult, RoughnessGrid, PlaneFit
+from svr_roughness.result import format_report, RoughnessResult, PlaneFit
 
 def decompress_if_needed(raw_bytes, file_name):
     lower = file_name.lower()
@@ -125,29 +125,21 @@ def run_analysis_payload(file_path_str, file_name, grid_mm, short_cutoff_mm, lon
     coords = np.column_stack((centered @ x_ax, centered @ y_ax, centered @ normal))
     plane = PlaneFit(centroid=centroid, normal=normal, x_axis=x_ax, y_axis=y_ax, coords=coords)
 
-    r_grid = RoughnessGrid(
-        raw=res.grid_z_mm,
-        filled=res.grid_z_mm,
-        filtered=res.grid_z_mm,
-        valid_raw=~np.isnan(res.grid_z_mm),
-        valid_filled=~np.isnan(res.grid_z_mm),
-        origin=res.grid_origin_mm,
-        svr_map=res.grid_svr_um,
-    )
+    grid_svr_um = compute_heatmap_grid(res.grid_z_mm, grid_mm, radius_mm=5.0)
 
     report(95, "Formatting report...")
     full_res = RoughnessResult(
+        svr_um=res.svr_um,
         sa_um=res.sa_um,
         sq_um=res.sq_um,
-        svr_um=res.svr_um,
+        noise_floor_um=res.noise_floor_um,
+        svr_raw_um=res.svr_raw_um,
         points=len(pts),
-        cropped_points=res.processed_points,
+        processed_points=res.processed_points,
         plane=plane,
-        raw_residual_std_mm=float(coords[:, 2].std()),
-        raw_residual_p05_mm=float(np.percentile(coords[::max(1, len(coords)//50000), 2], 5)),
-        raw_residual_p95_mm=float(np.percentile(coords[::max(1, len(coords)//50000), 2], 95)),
-        grid=r_grid,
-        surface_distances_mm=res.surface_distances_mm,
+        grid=res.grid_z_mm,
+        grid_pitch_mm=float(grid_mm),
+        grid_origin_mm=res.grid_origin_mm,
         variogram_bins_um=res.variogram_bins_um,
         variogram_counts=res.variogram_counts,
         config=conf,
@@ -179,7 +171,7 @@ def run_analysis_payload(file_path_str, file_name, grid_mm, short_cutoff_mm, lon
         ),
     }
 
-    grid_svr = np.where(np.isnan(res.grid_svr_um), None, np.round(res.grid_svr_um, 3)).tolist()
+    grid_svr = np.where(np.isnan(grid_svr_um), None, np.round(grid_svr_um, 3)).tolist()
 
     out = {
         "effective_name": eff_name,
