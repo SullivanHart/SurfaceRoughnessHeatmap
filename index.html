@@ -31,6 +31,16 @@
           </div>
         </div>
 
+        <div class="form-group" style="margin-top: -0.25rem;">
+          <label class="form-label">Example Scans (SCRATA A1&ndash;A4)</label>
+          <div class="sample-buttons-grid">
+            <button type="button" class="sample-btn" data-sample="SCRATA_A1.pcd" title="Load SCRATA A1 reference scan">A1</button>
+            <button type="button" class="sample-btn" data-sample="SCRATA_A2.pcd" title="Load SCRATA A2 reference scan">A2</button>
+            <button type="button" class="sample-btn" data-sample="SCRATA_A3.pcd" title="Load SCRATA A3 reference scan">A3</button>
+            <button type="button" class="sample-btn" data-sample="SCRATA_A4.pcd" title="Load SCRATA A4 reference scan">A4</button>
+          </div>
+        </div>
+
         <div class="form-group">
           <label class="form-label" for="unit-select">Measurement Units</label>
           <select id="unit-select" class="form-select">
@@ -115,9 +125,31 @@
         <!-- Empty State Prompt -->
         <div id="empty-state">
           <h2 style="font-size: 1.05rem; font-weight: 600; margin-bottom: 0.35rem; color: var(--text-main);">No Surface Scan Loaded</h2>
-          <p style="font-size: 0.84rem; color: var(--text-muted); max-width: 440px; margin: 0 auto;">
-            Select or drag a 3D point cloud file (.ply, .pcd, .stl, .csv) in the sidebar to begin inspection.
+          <p style="font-size: 0.84rem; color: var(--text-muted); max-width: 460px; margin: 0 auto 1.4rem auto;">
+            Select or drag a 3D point cloud file in the sidebar to begin inspection, or load a standard ASTM/SCRATA comparator plate below:
           </p>
+          <div class="empty-sample-grid">
+            <button type="button" class="empty-sample-card" data-sample="SCRATA_A1.pcd">
+              <span class="sample-badge">SCRATA Standard</span>
+              <span class="sample-title">A1 Reference Plate</span>
+              <span class="sample-desc">Fine roughness &bull; ~12 &micro;m S<sub>VR</sub></span>
+            </button>
+            <button type="button" class="empty-sample-card" data-sample="SCRATA_A2.pcd">
+              <span class="sample-badge">SCRATA Standard</span>
+              <span class="sample-title">A2 Reference Plate</span>
+              <span class="sample-desc">Medium-fine &bull; ~25 &micro;m S<sub>VR</sub></span>
+            </button>
+            <button type="button" class="empty-sample-card" data-sample="SCRATA_A3.pcd">
+              <span class="sample-badge">SCRATA Standard</span>
+              <span class="sample-title">A3 Reference Plate</span>
+              <span class="sample-desc">Medium-rough &bull; ~45 &micro;m S<sub>VR</sub></span>
+            </button>
+            <button type="button" class="empty-sample-card" data-sample="SCRATA_A4.pcd">
+              <span class="sample-badge">SCRATA Standard</span>
+              <span class="sample-title">A4 Reference Plate</span>
+              <span class="sample-desc">Heavy roughness &bull; ~85 &micro;m S<sub>VR</sub></span>
+            </button>
+          </div>
         </div>
 
         <!-- Results Dashboard -->

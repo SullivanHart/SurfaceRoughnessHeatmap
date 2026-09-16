@@ -200,6 +200,11 @@ function handleFileSelect (file) {
   if (!file) return
   selectedFile = file
 
+  // Sync active sample button if matching
+  document.querySelectorAll('.sample-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.getAttribute('data-sample') === file.name)
+  })
+
   // Immediately update Dropzone filename and size
   updateDropzoneFileDisplay(file)
 
@@ -602,6 +607,56 @@ downloadBtn.addEventListener('click', () => {
   a.download = `roughness_report_${name}.txt`
   a.click()
   URL.revokeObjectURL(url)
+})
+
+// Example SCRATA Samples Loader
+async function loadSampleScan (fileName) {
+  try {
+    document.querySelectorAll('.sample-btn').forEach(btn => {
+      btn.classList.toggle('active', btn.getAttribute('data-sample') === fileName)
+    })
+
+    if (completeTimeout) {
+      clearTimeout(completeTimeout)
+      completeTimeout = null
+    }
+    currentPercent = 10
+    targetPercent = 25
+    if (progressBar) progressBar.style.display = 'block'
+    if (progressFill) progressFill.style.width = '10%'
+    setProgress(20, `Fetching sample ${fileName}...`)
+    if (statusDot) statusDot.className = 'status-dot analyzing'
+
+    if (resultsContainer && resultsContainer.style.display !== 'none') {
+      resultsContainer.style.opacity = '0.45'
+      resultsContainer.style.pointerEvents = 'none'
+    }
+
+    const response = await fetch(`samples/${fileName}`)
+    if (!response.ok) {
+      throw new Error(`Failed to load ${fileName} (HTTP ${response.status})`)
+    }
+
+    setProgress(35, `Reading ${fileName}...`)
+    const blob = await response.blob()
+    const file = new File([blob], fileName, { type: 'application/octet-stream' })
+
+    handleFileSelect(file)
+  } catch (err) {
+    resetProgress()
+    if (statusDot) statusDot.className = 'status-dot ready'
+    if (statusText) statusText.textContent = `Error: ${err.message}`
+    console.error('Error loading sample:', err)
+  }
+}
+
+// Attach listeners to all sample trigger buttons (sidebar & empty state)
+document.querySelectorAll('[data-sample]').forEach(btn => {
+  btn.addEventListener('click', e => {
+    e.preventDefault()
+    const sample = btn.getAttribute('data-sample')
+    if (sample) loadSampleScan(sample)
+  })
 })
 
 // Initialize on page load

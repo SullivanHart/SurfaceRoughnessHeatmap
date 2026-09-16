@@ -401,12 +401,100 @@ details.standards-panel[open] summary {
 
 /* Empty State */
 #empty-state {
-  padding: 3.5rem 2rem;
+  padding: 3rem 1.5rem;
   text-align: center;
   background: var(--bg-surface);
   border: 1px solid var(--border-color);
   border-radius: 2px;
 }
+
+/* Example Sample Buttons in Sidebar */
+.sample-buttons-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0.35rem;
+  margin-top: 0.35rem;
+}
+
+.sample-btn {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+  font-weight: 700;
+  padding: 0.42rem 0.2rem;
+  border-radius: 2px;
+  cursor: pointer;
+  text-align: center;
+  transition: all 0.15s ease;
+}
+
+.sample-btn:hover {
+  border-color: var(--primary);
+  color: var(--text-main);
+  background: var(--isu-cardinal-subtle);
+}
+
+.sample-btn.active {
+  border-color: var(--primary);
+  color: #ffffff;
+  background: var(--primary);
+}
+
+[data-theme="light"] .sample-btn.active {
+  color: #ffffff;
+  background: var(--primary);
+}
+
+/* Empty State Sample Cards */
+.empty-sample-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 0.85rem;
+  max-width: 820px;
+  margin: 0 auto;
+}
+
+.empty-sample-card {
+  background: var(--bg-subtle);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  padding: 1rem 1.1rem;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  transition: all 0.18s ease;
+  color: var(--text-main);
+  text-align: left;
+}
+
+.empty-sample-card:hover {
+  border-color: var(--primary);
+  background: var(--isu-cardinal-subtle);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.2);
+}
+
+.empty-sample-card .sample-badge {
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--isu-cardinal);
+}
+
+.empty-sample-card .sample-title {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--text-main);
+}
+
+.empty-sample-card .sample-desc {
+  font-size: 0.76rem;
+  color: var(--text-muted);
+}
+
 
 /* Status Ribbon */
 .status-ribbon {
