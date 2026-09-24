@@ -147,27 +147,21 @@ def run_analysis_payload(file_path_str, file_name, grid_mm, short_cutoff_mm, lon
 
     report_str = format_report(full_res)
 
-    def get_rating(val, thresholds, labels):
-        for t, label in zip(thresholds, labels):
-            if val <= t:
-                return label
-        return labels[-1]
+    def get_closest_rating(val, standards):
+        return min(standards, key=lambda item: abs(val - item[1]))[0]
 
     comparators = {
-        "SCRATA (ASTM A802)": get_rating(
+        "SCRATA (ASTM A802)": get_closest_rating(
             res.svr_um,
-            [26.0, 48.0, 71.0, 99.0, 137.0, 198.0, 274.0, 381.0, 533.0],
-            ["A1", "A2", "A3", "A4", "A5", "A6", "A7", "A8", "A9", "> A9"]
+            [("A1", 26.4), ("A2", 44.8), ("A3", 63.0), ("A4", 131.5)]
         ),
-        "GAR C-9": get_rating(
+        "GAR C-9": get_closest_rating(
             res.svr_um,
-            [16.0, 30.0, 56.0, 107.0],
-            ["C-9 300", "C-9 600", "C-9 1200", "C-9 2400", "> C-9 2400"]
+            [("C-9 200", 9.2), ("C-9 300", 16.3), ("C-9 420", 18.7), ("C-9 560", 27.4), ("C-9 720", 58.5), ("C-9 900", 71.1)]
         ),
-        "ACI SIS": get_rating(
+        "ACI SIS": get_closest_rating(
             res.svr_um,
-            [9.0, 18.0, 36.0, 71.0],
-            ["SIS-1", "SIS-2", "SIS-3", "SIS-4", "> SIS-4"]
+            [("SIS-1", 9.4), ("SIS-2", 19.9), ("SIS-3", 24.5), ("SIS-4", 80.1)]
         ),
     }
 

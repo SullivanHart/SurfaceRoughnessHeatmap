@@ -86,7 +86,7 @@ function updateDropzoneFileDisplay (file, extraInfo) {
     }
   } else {
     dropzone.classList.remove('has-file')
-    if (dropzoneText) dropzoneText.textContent = 'Select or Drag 3D Scan'
+    if (dropzoneText) dropzoneText.textContent = 'Upload or Drag 3D Scan'
     if (dropzoneHint) dropzoneHint.textContent = 'PLY, PCD, STL, OBJ, CSV, XYZ'
   }
 }
@@ -200,10 +200,17 @@ function handleFileSelect (file) {
   if (!file) return
   selectedFile = file
 
-  // Sync active sample button if matching
-  document.querySelectorAll('.sample-btn').forEach(btn => {
-    btn.classList.toggle('active', btn.getAttribute('data-sample') === file.name)
-  })
+  // Reset or sync sample dropdown: if this file was loaded as a sample scan, show it;
+  // otherwise (uploaded user file), default dropdown to "Select…" since the scan isn't in there.
+  const sampleSelect = document.getElementById('sample-select')
+  if (sampleSelect) {
+    if (file.isSampleScan) {
+      sampleSelect.value = file.name
+    } else {
+      sampleSelect.selectedIndex = 0
+      sampleSelect.value = ''
+    }
+  }
 
   // Immediately update Dropzone filename and size
   updateDropzoneFileDisplay(file)
@@ -612,6 +619,10 @@ downloadBtn.addEventListener('click', () => {
 // Example SCRATA Samples Loader
 async function loadSampleScan (fileName) {
   try {
+    const sampleSelect = document.getElementById('sample-select')
+    if (sampleSelect) {
+      sampleSelect.value = fileName
+    }
     document.querySelectorAll('.sample-btn').forEach(btn => {
       btn.classList.toggle('active', btn.getAttribute('data-sample') === fileName)
     })
@@ -640,9 +651,15 @@ async function loadSampleScan (fileName) {
     setProgress(35, `Reading ${fileName}...`)
     const blob = await response.blob()
     const file = new File([blob], fileName, { type: 'application/octet-stream' })
+    file.isSampleScan = true
 
     handleFileSelect(file)
   } catch (err) {
+    const sampleSelect = document.getElementById('sample-select')
+    if (sampleSelect) {
+      sampleSelect.selectedIndex = 0
+      sampleSelect.value = ''
+    }
     resetProgress()
     if (statusDot) statusDot.className = 'status-dot ready'
     if (statusText) statusText.textContent = `Error: ${err.message}`
@@ -650,7 +667,16 @@ async function loadSampleScan (fileName) {
   }
 }
 
-// Attach listeners to all sample trigger buttons (sidebar & empty state)
+// Attach listener to sample dropdown selector
+const sampleSelectElem = document.getElementById('sample-select')
+if (sampleSelectElem) {
+  sampleSelectElem.addEventListener('change', e => {
+    const sample = e.target.value
+    if (sample) loadSampleScan(sample)
+  })
+}
+
+// Attach listeners to any trigger buttons with data-sample attribute
 document.querySelectorAll('[data-sample]').forEach(btn => {
   btn.addEventListener('click', e => {
     e.preventDefault()
@@ -662,3 +688,13 @@ document.querySelectorAll('[data-sample]').forEach(btn => {
 // Initialize on page load
 initTheme()
 initWorker()
+if (sampleSelectElem) {
+  sampleSelectElem.selectedIndex = 0
+  sampleSelectElem.value = ''
+}
+window.addEventListener('pageshow', () => {
+  if (sampleSelectElem && !selectedFile) {
+    sampleSelectElem.selectedIndex = 0
+    sampleSelectElem.value = ''
+  }
+})
