@@ -3,14 +3,16 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>SurfInspect</title>
+    <title>SurfInspect — Digital Surface Roughness Metrology</title>
     <link rel="stylesheet" href="style.css" />
-    <!-- Plotly.js for interactive WebGL 2D Heatmap & charts -->
+    <!-- Plotly.js for interactive 2D Heatmap & 3D Topography -->
     <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+    <!-- High-Performance Native WebGL 3D Point Cloud Engine -->
+    <script src="pointcloud-viewer.js"></script>
   </head>
   <body>
     <div class="app-container">
-      <!-- Sidebar -->
+      <!-- Left Sidebar: Data Acquisition & Processing Parameters -->
       <aside class="sidebar">
         <div class="sidebar-brand">
           <div class="brand-dot"></div>
@@ -20,10 +22,11 @@
           </div>
         </div>
 
+        <!-- 1. Data Acquisition / Upload -->
         <div class="upload">
           <div class="dropzone" id="dropzone">
             <div class="dropzone-file-info">
-              <div class="dropzone-text" id="dropzone-text">Upload or Drag 3D Scan</div>
+              <div class="dropzone-text" id="dropzone-text">Load 3D Surface Scan</div>
               <div class="dropzone-hint" id="dropzone-hint">PLY, PCD, STL, OBJ, CSV, XYZ</div>
             </div>
             <button type="button" class="dropzone-replace-btn" id="dropzone-replace-btn">Change</button>
@@ -35,15 +38,17 @@
           <div class="subtle-or">or</div>
           <div class="sample-picker-subtle">
             <select id="sample-select" class="sample-select-subtle" autocomplete="off" aria-label="Reference standard sample">
-              <option value="" selected>Select sample…</option>
+              <option value="" selected>Select reference standard…</option>
               <option value="SCRATA_A1.pcd">SCRATA A1 (Fine &bull; ~26 &micro;m)</option>
               <option value="SCRATA_A2.pcd">SCRATA A2 (Medium-Fine &bull; ~45 &micro;m)</option>
               <option value="SCRATA_A3.pcd">SCRATA A3 (Medium-Rough &bull; ~63 &micro;m)</option>
               <option value="SCRATA_A4.pcd">SCRATA A4 (Rough &bull; ~132 &micro;m)</option>
+              <option value="SCRATA_CUBE_Mix.pcd">SCRATA 3D Cube (5 Faces &bull; Multi-Surface)</option>
             </select>
           </div>
         </div>
 
+        <!-- 2. Measurement Units -->
         <div class="form-group">
           <label class="form-label" for="unit-select">Measurement Units</label>
           <select id="unit-select" class="form-select">
@@ -53,11 +58,12 @@
           </select>
         </div>
 
+        <!-- 3. Filtration Parameters -->
         <details class="standards-panel" id="standards-panel">
           <summary>Filtration &amp; Grid Parameters</summary>
           <div class="panel-content">
             <div class="form-group">
-              <label class="form-label" for="grid-pitch">Grid Pitch (mm)</label>
+              <label class="form-label" for="grid-pitch">Grid Pitch &Delta;x (mm)</label>
               <input type="number" id="grid-pitch" class="form-input" value="0.20" step="0.05" min="0.01" />
             </div>
             <div class="form-group">
@@ -75,10 +81,11 @@
           </div>
         </details>
 
+        <!-- 4. Heatmap Colormap & Scale -->
         <div>
-          <div class="sidebar-title">Heatmap Display</div>
+          <div class="sidebar-title">Colormap Display</div>
           <div class="form-group" style="margin-bottom: 0.6rem;">
-            <label class="form-label" for="palette-select">Color Palette</label>
+            <label class="form-label" for="palette-select">Palette</label>
             <select id="palette-select" class="form-select">
               <option value="Jet" selected>Jet</option>
               <option value="Viridis">Viridis</option>
@@ -87,27 +94,33 @@
               <option value="Rainbow">Rainbow</option>
             </select>
           </div>
-          <div style="display: flex; align-items: center; gap: 0.5rem;">
+          <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.4rem;">
             <input type="checkbox" id="robust-contrast" checked />
-            <label for="robust-contrast" class="form-label" style="font-size: 0.78rem;">Robust Contrast (1st–99th Percentile)</label>
+            <label for="robust-contrast" class="form-label" style="font-size: 0.78rem;">Robust Contrast (1st–99th %tile)</label>
+          </div>
+          <div style="display: flex; align-items: center; gap: 0.5rem;">
+            <input type="checkbox" id="show-unassigned" checked />
+            <label for="show-unassigned" class="form-label" style="font-size: 0.78rem;">Show Edge / Unprocessed (Grey)</label>
           </div>
         </div>
 
+        <!-- 5. System Engine Status -->
         <div class="system-status">
           <div class="status-dot" id="status-dot"></div>
-          <span id="status-text">Initializing...</span>
+          <span id="status-text">Initializing Engine...</span>
         </div>
       </aside>
 
-      <!-- Main Content -->
+      <!-- Main Inspection Viewport & Results -->
       <main class="main-content">
+        <!-- Top Metrology App Bar -->
         <header class="main-header-row">
-          <div>
+          <div class="header-brand-wrap">
             <h1 class="main-header">SurfInspect</h1>
             <div class="sub-header">Digital Surface Roughness Metrology</div>
           </div>
-          <div>
-            <button id="theme-btn" class="theme-icon-btn" type="button" aria-label="Toggle theme" title="Switch to Light Mode">
+          <div class="header-tools-wrap">
+            <button id="theme-btn" class="theme-icon-btn" type="button" aria-label="Toggle theme" title="Toggle Light / Dark Mode">
               <svg id="theme-icon-sun" class="theme-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <circle cx="12" cy="12" r="5"></circle>
                 <line x1="12" y1="1" x2="12" y2="3"></line>
@@ -126,99 +139,108 @@
           </div>
         </header>
 
-        <!-- Empty State Prompt -->
+        <!-- Empty State -->
         <div id="empty-state" class="empty-state">
           <h2 class="empty-state-title">No Surface Scan Loaded</h2>
           <p class="empty-state-desc">
-            Upload or drag a 3D scan in the sidebar to begin inspection.
+            Load a 3D surface scan or select a reference standard in the sidebar to perform digital roughness inspection.
           </p>
-          <div class="empty-state-meta">
-            <span>Supported: PLY, PCD, STL, OBJ, CSV, XYZ, NPY, NPZ (.gz / .zip)</span>
-          </div>
         </div>
 
         <!-- Results Dashboard -->
         <div id="results-container" style="display: none;">
-          <!-- Status Ribbon -->
-          <div class="status-ribbon">
-            <div class="ribbon-item">
-              <span class="ribbon-label">File:</span>
-              <span class="ribbon-value" id="ribbon-filename">-</span>
-            </div>
-            <div class="ribbon-item">
-              <span class="ribbon-label">Area:</span>
-              <span class="badge" id="ribbon-patch">-</span>
-            </div>
-            <div class="ribbon-item">
-              <span class="ribbon-label">Pitch:</span>
-              <span class="badge" id="ribbon-pitch">-</span>
-            </div>
-            <div class="ribbon-item" style="margin-left: auto;">
-              <span class="ribbon-label">Time:</span>
-              <span class="ribbon-value" style="color: var(--primary);" id="ribbon-timing">-</span>
-            </div>
+          <!-- Face Navigation Tabs (For Multi-Face 3D Scans) -->
+          <div class="part-nav-bar" id="part-nav-bar" style="display: none;">
+            <div class="part-nav-pills" id="part-nav-pills"></div>
           </div>
 
-          <!-- Heatmap & Primary KPI -->
+          <!-- Main Viewport (3) : Metrics (1) Grid -->
           <div class="dashboard-grid">
             <div class="chart-card">
+              <!-- Canvas and Plot Containers -->
               <div id="chart-container"></div>
+              <canvas id="pointcloud-canvas" style="display: none;"></canvas>
             </div>
 
-            <div class="kpi-card">
-              <div class="kpi-title">Surface Variogram Roughness (S<sub>VR</sub>)</div>
+            <!-- Right: Results Panel -->
+            <div class="kpi-card" id="kpi-card">
+              <!-- KPI Header Title -->
+              <div class="kpi-title" id="kpi-card-title">Roughness (S<sub>VR</sub>)</div>
+              <!-- Primary Number -->
               <div class="kpi-value-primary" id="kpi-svr">-</div>
 
+              <!-- 3D Part Orientation Thumbnail (Visible during Face Inspection) -->
+              <div class="shape-mini-preview" id="shape-mini-preview" style="display: none;" title="Click to view in 3D scan">
+                <canvas id="mini-preview-canvas" width="200" height="90"></canvas>
+              </div>
+
               <div class="sec-metric">
-                <span class="sec-label">Arithmetic Mean (Sa)</span>
-                <span class="sec-val" id="kpi-sa">-</span>
+                <span class="sec-label" id="sec-label-1">Arithmetic Mean (S<sub>a</sub>)</span>
+                <span class="sec-val" id="sec-val-1">-</span>
               </div>
               <div class="sec-metric">
-                <span class="sec-label">Root Mean Square (Sq)</span>
-                <span class="sec-val" id="kpi-sq">-</span>
+                <span class="sec-label" id="sec-label-2">Root Mean Square (S<sub>q</sub>)</span>
+                <span class="sec-val" id="sec-val-2">-</span>
               </div>
               <div class="sec-metric">
-                <span class="sec-label">Active Surface Points</span>
-                <span class="sec-val" id="kpi-points">-</span>
+                <span class="sec-label" id="sec-label-3">Worst Face S<sub>VR</sub></span>
+                <span class="sec-val" id="sec-val-3">-</span>
               </div>
               <div class="sec-metric">
-                <span class="sec-label">Grid Coverage</span>
-                <span class="sec-val" id="kpi-coverage">-</span>
+                <span class="sec-label" id="sec-label-4">Mean Face S<sub>VR</sub></span>
+                <span class="sec-val" id="sec-val-4">-</span>
               </div>
               <div class="sec-metric">
-                <span class="sec-label">Evaluation Length</span>
-                <span class="sec-val" id="kpi-eval-len">-</span>
+                <span class="sec-label" id="sec-label-5">Total Points</span>
+                <span class="sec-val" id="sec-val-5">-</span>
               </div>
+
+              <!-- Standard Comparators Section -->
+              <div class="kpi-section-title">Standard Comparators</div>
+              <table class="comparator-compact-table">
+                <tbody id="comparator-tbody"></tbody>
+              </table>
+
+              <!-- Autocorrelation Variogram Section -->
+              <div class="kpi-section-title" id="var-section-title">Autocorrelation Variogram &gamma;(h)</div>
+              <div id="variogram-chart"></div>
             </div>
           </div>
 
-          <!-- Structured Tabs -->
+          <!-- Bottom Section: Faces Breakdown Table + Inspection Report -->
           <div class="tabs-container">
             <div class="tab-nav">
-              <button class="tab-btn active" data-tab="tab-comp">Comparators</button>
-              <button class="tab-btn" data-tab="tab-var">Variogram</button>
-              <button class="tab-btn" data-tab="tab-rep">Report</button>
+              <button class="tab-btn active" data-tab="tab-faces" id="tab-btn-faces">Faces</button>
+              <button class="tab-btn" data-tab="tab-rep" id="tab-btn-rep">Inspection Report</button>
             </div>
 
-            <div class="tab-content active" id="tab-comp">
-              <table class="data-table">
-                <thead>
-                  <tr>
-                    <th>Standard</th>
-                    <th>Visual Rating</th>
-                  </tr>
-                </thead>
-                <tbody id="comparator-tbody"></tbody>
-              </table>
+            <!-- Tab: 3D Faces Breakdown Table -->
+            <div class="tab-content active" id="tab-faces">
+              <div class="faces-table-wrapper">
+                <table class="data-table faces-summary-table">
+                  <thead>
+                    <tr>
+                      <th>Target Surface</th>
+                      <th>Dimensions</th>
+                      <th>Surface Area</th>
+                      <th>Points</th>
+                      <th>S<sub>VR</sub></th>
+                      <th>S<sub>a</sub></th>
+                      <th>S<sub>q</sub></th>
+                      <th>SCRATA Equivalent</th>
+                    </tr>
+                  </thead>
+                  <tbody id="faces-tbody"></tbody>
+                </table>
+              </div>
             </div>
 
-            <div class="tab-content" id="tab-var">
-              <div id="variogram-chart"></div>
-            </div>
-
+            <!-- Tab: Formal Metrology Report -->
             <div class="tab-content" id="tab-rep">
               <div class="report-view" id="report-pre"></div>
-              <button class="btn" id="download-report-btn">Download Report (.txt)</button>
+              <div style="display: flex; gap: 0.65rem;">
+                <button class="btn" id="download-report-btn">Download Report (.txt)</button>
+              </div>
             </div>
           </div>
         </div>

@@ -1,8 +1,8 @@
 /* Iowa State University IMSE - HAM Lab - Surface Roughness Analysis Workbench */
 :root {
-  /* Typography - Official Iowa State University Brand Typefaces */
-  --font-serif: "ITC Berkeley Oldstyle", "Berkeley Oldstyle", "Times New Roman", Times, Georgia, serif;
-  --font-sans: "Univers", "Univers LT Std", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  /* Typography - Clean Modern Engineering Metrology Typefaces */
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-serif: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   --font-mono: ui-monospace, "SF Mono", "Consolas", "Roboto Mono", "Liberation Mono", "Menlo", monospace;
 
   /* Dark Theme (Default) - Refined Technical Palette */
@@ -85,9 +85,9 @@ body {
 }
 
 h1, h2, h3, h4 {
-  font-family: var(--font-serif);
+  font-family: var(--font-sans);
   font-weight: 700;
-  letter-spacing: -0.01em;
+  letter-spacing: -0.015em;
 }
 
 /* App Container */
@@ -399,12 +399,23 @@ details.standards-panel[open] summary {
   padding-bottom: 0.75rem;
 }
 
+.header-brand-wrap {
+  display: flex;
+  flex-direction: column;
+}
+
+.header-tools-wrap {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
 .main-header {
-  font-family: var(--font-serif);
-  font-size: 1.65rem;
+  font-family: var(--font-sans);
+  font-size: 1.55rem;
   font-weight: 700;
   color: var(--text-main);
-  letter-spacing: -0.015em;
+  letter-spacing: -0.02em;
   line-height: 1.15;
 }
 
@@ -458,7 +469,7 @@ details.standards-panel[open] summary {
 }
 
 .empty-state-title {
-  font-family: var(--font-serif);
+  font-family: var(--font-sans);
   font-size: 1.35rem;
   font-weight: 700;
   color: var(--text-main);
@@ -544,6 +555,7 @@ details.standards-panel[open] summary {
   grid-template-columns: 3fr 1fr;
   gap: 1rem;
   margin-bottom: 1rem;
+  align-items: stretch;
 }
 
 @media (max-width: 1024px) {
@@ -553,19 +565,64 @@ details.standards-panel[open] summary {
 }
 
 .chart-card {
+  position: relative;
   background: var(--bg-surface);
   border: 1px solid var(--border-color);
   border-radius: 2px;
-  padding: 0.65rem;
-  min-height: 520px;
+  padding: 0.5rem;
+  height: 100%;
+  min-height: 540px;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
 
 #chart-container {
   flex: 1;
   width: 100%;
-  height: 500px;
+  height: 100%;
+  min-height: 520px;
+  overflow: hidden;
+  position: relative;
+}
+
+#pointcloud-canvas {
+  flex: 1;
+  width: 100%;
+  height: 100%;
+  min-height: 520px;
+  outline: none;
+  cursor: grab;
+  touch-action: none;
+}
+
+#pointcloud-canvas:active {
+  cursor: grabbing;
+}
+
+/* 3D Shape Mini-Preview Orientation Widget inside Results Panel */
+.shape-mini-preview {
+  margin: 0.4rem 0 0.65rem 0;
+  background: var(--bg-subtle);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  padding: 4px 6px;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
+  user-select: none;
+}
+
+.shape-mini-preview:hover {
+  border-color: var(--primary);
+  background: var(--bg-surface);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
+}
+
+#mini-preview-canvas {
+  display: block;
+  width: 100%;
+  height: 85px;
+  cursor: pointer;
 }
 
 /* KPI Card */
@@ -590,12 +647,13 @@ details.standards-panel[open] summary {
 }
 
 .kpi-value-primary {
-  font-family: var(--font-serif);
-  font-size: 2.25rem;
+  font-family: var(--font-mono);
+  font-size: 2.15rem;
   font-weight: 700;
   color: var(--text-main);
   line-height: 1.15;
   font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
 }
 
 .kpi-value-sub {
@@ -607,8 +665,8 @@ details.standards-panel[open] summary {
 
 .sec-metric {
   border-top: 1px solid var(--border-subtle);
-  padding-top: 0.55rem;
-  margin-top: 0.65rem;
+  padding-top: 0.5rem;
+  margin-top: 0.55rem;
   display: flex;
   justify-content: space-between;
   align-items: baseline;
@@ -616,16 +674,60 @@ details.standards-panel[open] summary {
 
 .sec-label {
   font-family: var(--font-sans);
-  font-size: 0.8rem;
+  font-size: 0.78rem;
   color: var(--text-secondary);
 }
 
 .sec-val {
-  font-size: 0.88rem;
+  font-size: 0.84rem;
   font-weight: 600;
   color: var(--text-main);
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
+}
+
+/* KPI Subsections (Comparators & Variogram in Right Panel) */
+.kpi-section-title {
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  margin-top: 0.85rem;
+  margin-bottom: 0.35rem;
+  padding-top: 0.6rem;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.comparator-compact-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.78rem;
+  margin-bottom: 0.25rem;
+}
+
+.comparator-compact-table td {
+  padding: 0.28rem 0;
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+}
+
+.comparator-compact-table td:first-child {
+  font-weight: 500;
+}
+
+.comparator-compact-table td:last-child {
+  text-align: right;
+  font-family: var(--font-mono);
+  font-weight: 700;
+  color: var(--text-main);
+}
+
+#variogram-chart {
+  width: 100%;
+  height: 160px;
+  border-radius: 2px;
+  overflow: hidden;
 }
 
 /* Tabs */
@@ -732,4 +834,247 @@ details.standards-panel[open] summary {
 
 .btn:hover {
   background: var(--primary-hover);
+}
+
+/* ── 3D View Toggle & Point Cloud ─────────────────────────── */
+
+.chart-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  padding: 0.4rem 0.6rem 0.55rem;
+  border-bottom: 1px solid var(--border-subtle);
+  margin-bottom: 0.35rem;
+}
+
+.viewport-controls-group {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  flex-wrap: wrap;
+}
+
+.chart-card-title {
+  font-family: var(--font-sans);
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--text-main);
+  letter-spacing: -0.01em;
+}
+
+/* Metrology Tool Buttons (Camera presets) */
+.cam-presets-bar {
+  display: inline-flex;
+  background: var(--bg-subtle);
+  border: 1px solid var(--border-color);
+  border-radius: 2px;
+  padding: 2px;
+  gap: 2px;
+}
+
+.tool-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 0.25rem 0.45rem;
+  border-radius: 2px;
+  cursor: pointer;
+  transition: all 0.12s ease;
+  user-select: none;
+}
+
+.tool-btn:hover {
+  background: var(--bg-surface);
+  color: var(--text-main);
+}
+
+.tool-btn:active {
+  background: var(--isu-cardinal-subtle);
+  color: var(--isu-cardinal);
+}
+
+.view-toggle-bar {
+  position: absolute;
+  top: 0.75rem;
+  left: 0.75rem;
+  z-index: 10;
+  display: inline-flex;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-color);
+  border-radius: 3px;
+  padding: 2px;
+  gap: 2px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+}
+
+.view-toggle-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-size: 0.76rem;
+  font-weight: 600;
+  padding: 0.3rem 0.6rem;
+  border-radius: 2px;
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+
+.view-toggle-btn:hover {
+  color: var(--text-main);
+  background: var(--bg-surface);
+}
+
+.view-toggle-btn.active {
+  background: var(--bg-surface);
+  color: var(--isu-cardinal);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+  font-weight: 700;
+}
+
+.pts-size-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  background: var(--bg-subtle);
+  border: 1px solid var(--border-color);
+  padding: 0.2rem 0.5rem;
+  border-radius: 2px;
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+}
+
+.pts-size-label {
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 0.62rem;
+  color: var(--text-muted);
+}
+
+.pts-size-slider {
+  width: 68px;
+  height: 4px;
+  cursor: pointer;
+  accent-color: var(--isu-cardinal);
+}
+
+.pts-size-val {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  color: var(--text-main);
+  min-width: 2.2rem;
+  font-size: 0.68rem;
+}
+
+#pointcloud-canvas {
+  flex: 1;
+  width: 100%;
+  height: 500px;
+  display: none;
+  outline: none;
+  cursor: grab;
+  border-radius: 2px;
+}
+
+#pointcloud-canvas:active {
+  cursor: grabbing;
+}
+
+/* ── Face Navigation Tabs (Multi-Face) ───────────────────── */
+
+.part-nav-bar {
+  display: flex;
+  align-items: flex-end;
+  border-bottom: 2px solid var(--border-color);
+  margin-bottom: 0.85rem;
+  padding: 0;
+  background: transparent;
+}
+
+.part-nav-pills {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.25rem;
+  flex-wrap: wrap;
+  margin-bottom: -2px;
+}
+
+.part-pill {
+  background: var(--bg-subtle);
+  border: 1px solid var(--border-color);
+  border-bottom: 2px solid transparent;
+  color: var(--text-secondary);
+  font-size: 0.82rem;
+  font-weight: 600;
+  padding: 0.45rem 1rem;
+  border-top-left-radius: 3px;
+  border-top-right-radius: 3px;
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+  cursor: pointer;
+  transition: all 0.12s ease;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  user-select: none;
+}
+
+.part-pill:hover {
+  background: var(--bg-surface);
+  color: var(--text-main);
+  border-color: var(--text-muted);
+}
+
+.part-pill.active {
+  background: var(--bg-surface);
+  color: var(--text-main);
+  border-color: var(--border-color);
+  border-bottom: 2px solid var(--isu-cardinal);
+  font-weight: 700;
+}
+
+.part-pill-swatch {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  display: inline-block;
+}
+
+/* ── 3D Faces Summary Table ──────────────────────────────── */
+
+.faces-table-wrapper {
+  overflow-x: auto;
+}
+
+.faces-summary-table {
+  width: 100%;
+}
+
+.faces-summary-table tbody tr {
+  cursor: pointer;
+  transition: background 0.1s ease;
+}
+
+.faces-summary-table tbody tr:hover {
+  background: var(--bg-subtle);
+}
+
+.faces-summary-table tbody tr.active-row {
+  background: var(--isu-cardinal-subtle);
+  font-weight: 600;
+}
+
+.faces-summary-table td {
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.faces-summary-table td:first-child {
+  font-family: var(--font-sans);
+  font-weight: 700;
 }

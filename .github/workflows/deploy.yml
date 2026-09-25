@@ -1,0 +1,63 @@
+name: Build and Deploy Heatmap to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+  repository_dispatch:
+    types: [svr-roughness-updated]
+  schedule:
+    # Check for new package releases every Sunday at midnight
+    - cron: '0 0 * * 0'
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: github-pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Heatmap Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Fetch Latest svr-roughness Wheel
+        run: |
+          mkdir -p tmp_wheel
+          echo "Attempting to download latest svr-roughness wheel from PyPI..."
+          if pip download --no-deps svr-roughness -d tmp_wheel/; then
+            WHL_FILE=$(ls tmp_wheel/*.whl | head -n 1)
+            echo "Successfully fetched $WHL_FILE from PyPI"
+            # Remove existing wheels and replace with newly fetched wheel
+            rm -f svr_roughness-*.whl
+            cp "$WHL_FILE" ./
+            cp "$WHL_FILE" ./svr_roughness-latest-py3-none-any.whl
+            echo "Updated bundled wheel to latest PyPI version."
+          else
+            echo "PyPI download not available or failed; using existing bundled wheel if present."
+          fi
+
+      - name: Setup GitHub Pages
+        uses: actions/configure-pages@v4
+
+      - name: Upload Pages Artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: '.'
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
