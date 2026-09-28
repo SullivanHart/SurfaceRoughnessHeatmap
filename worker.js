@@ -45,64 +45,50 @@ function initPyodide () {
       }
       if (localWheelBuildError) throw new Error(localWheelBuildError)
 
-      if (localWheelName) {
+      const candidateWheels = localWheelName
+        ? [localWheelName]
+        : [
+            'svr_roughness-latest-py3-none-any.whl',
+            'svr_roughness-0.7.4-py3-none-any.whl',
+            'svr_roughness-0.7.3-py3-none-any.whl',
+            'svr_roughness-0.7.2-py3-none-any.whl',
+            'svr_roughness-0.7.1-py3-none-any.whl'
+          ]
+
+      for (const whlName of candidateWheels) {
         try {
-          const fetchUrl = new URL(localWheelName + '?v=' + Date.now(), self.location.href).href
+          const fetchUrl = new URL(whlName + '?v=' + Date.now(), self.location.href).href
           const whlResp = await fetch(fetchUrl, { cache: 'no-store' })
           if (whlResp.ok) {
             const buf = await whlResp.arrayBuffer()
-            const vfsPath = '/home/pyodide/' + localWheelName
+            const vfsPath = '/home/pyodide/engine.whl'
             pyodide.FS.writeFile(vfsPath, new Uint8Array(buf))
             pyodide.globals.set('_local_whl_path', vfsPath)
-            await pyodide.runPythonAsync(`
-import micropip
-await micropip.install("emfs:" + _local_whl_path, deps=False)
+            pyodide.runPython(`
+import sys
+import zipfile
+target_dir = next((p for p in sys.path if "site-packages" in p), None)
+if not target_dir:
+    target_dir = "/lib/python3.12/site-packages"
+with zipfile.ZipFile(_local_whl_path) as zf:
+    zf.extractall(target_dir)
+if target_dir not in sys.path:
+    sys.path.insert(0, target_dir)
 `)
             installed = true
-            console.log('Loaded local wheel:', localWheelName)
+            console.log('Unpacked and installed bundled wheel:', whlName)
+            break
           }
         } catch (err) {
-          console.warn('Failed installing local wheel:', err)
+          console.warn('Failed extracting bundled wheel ' + whlName + ':', err)
         }
       }
 
       if (!installed) {
-        for (const whlName of [
-          'svr_roughness-latest-py3-none-any.whl',
-          'svr_roughness-0.7.4-py3-none-any.whl',
-          'svr_roughness-0.7.3-py3-none-any.whl',
-          'svr_roughness-0.7.2-py3-none-any.whl',
-          'svr_roughness-0.7.1-py3-none-any.whl'
-        ]) {
-          try {
-            const fetchUrl = new URL(whlName + '?v=' + Date.now(), self.location.href).href
-            const whlResp = await fetch(fetchUrl, { cache: 'no-store' })
-            if (whlResp.ok) {
-              const buf = await whlResp.arrayBuffer()
-              const vfsPath = '/home/pyodide/' + whlName
-              pyodide.FS.writeFile(vfsPath, new Uint8Array(buf))
-              pyodide.globals.set('_local_whl_path', vfsPath)
-              await pyodide.runPythonAsync(`
-import micropip
-await micropip.install("emfs:" + _local_whl_path, deps=False)
-`)
-              installed = true
-              console.log('Loaded bundled wheel:', whlName)
-              break
-            }
-          } catch (err) {
-            console.warn('Failed installing bundled wheel ' + whlName + ':', err)
-          }
-        }
-      }
-
-      if (!installed) {
-        console.warn('Bundled wheel not found; fetching latest svr-roughness from PyPI...')
+        console.warn('Bundled wheel not found; fetching svr-roughness from PyPI...')
         postMessage({ type: 'status', text: 'Fetching svr-roughness from PyPI...' })
-        await pyodide.runPythonAsync(`
-import micropip
-await micropip.install('svr-roughness', deps=False)
-`)
+        const micropip = pyodide.pyimport('micropip')
+        await micropip.install('svr-roughness')
       }
 
     // Setup Python analysis helper
