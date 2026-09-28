@@ -466,6 +466,9 @@ def run_analysis_payload(file_path_str, file_name, grid_mm, short_cutoff_mm, lon
     postMessage({ type: 'error', error: err.message || err.toString() })
     throw err
   }
+  })()
+
+  return pyodideInitPromise
 }
 
 let currentWorkerJobId = 0

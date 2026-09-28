@@ -71,6 +71,13 @@ const secLabel5 = document.getElementById('sec-label-5')
 const secVal5 = document.getElementById('sec-val-5')
 
 async function checkLocalBackend () {
+  const urlParams = new URLSearchParams(window.location.search)
+  if (urlParams.get('runtime') === 'worker' || urlParams.get('runtime') === 'pyodide') {
+    isLocalBackend = false
+    console.log('[Dashboard] Forcing client-side WebWorker (Pyodide) mode via query param')
+    return false
+  }
+
   if (
     window.location.hostname === 'localhost' ||
     window.location.hostname === '127.0.0.1' ||
@@ -289,6 +296,14 @@ function initWorker () {
       if (statusText) statusText.textContent = 'Error: ' + error
       console.error('Analysis error:', error)
     }
+  }
+
+  worker.onerror = function (err) {
+    console.error('Worker error:', err)
+    isAnalyzing = false
+    if (statusDot) statusDot.className = 'status-dot ready'
+    resetProgress()
+    if (statusText) statusText.textContent = `Worker Error: ${err.message || 'Script execution failed'}`
   }
 }
 
