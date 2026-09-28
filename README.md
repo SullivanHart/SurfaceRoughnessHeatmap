@@ -26,5 +26,12 @@ Then open `http://localhost:8000` in any modern browser (Chrome, Edge, Firefox, 
 
 ## Deployment
 
-Configured for zero-config deployment to Cloudflare Pages via `wrangler.toml`.
+Deploy through the Cloudflare Pages project's Git integration on pushes to `main`.
+
+Cloudflare Pages build settings:
+
+- Build command: `bash build.sh`
+- Build output directory: `.`
+
+The build bundles the `svr-roughness` wheel required by the browser worker. Project configuration is in `wrangler.toml`. GitHub Pages deployment is disabled by removing its Actions workflow.
 
