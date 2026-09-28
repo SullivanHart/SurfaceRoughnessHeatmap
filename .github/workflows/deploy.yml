@@ -29,16 +29,32 @@ jobs:
         with:
           python-version: '3.13'
 
-      - name: Fetch Latest svr-roughness Wheel
+      - name: Setup svr-roughness Wheel
         run: |
           mkdir -p tmp_wheel
-          echo "Downloading latest svr-roughness wheel from PyPI..."
-          pip download --no-deps svr-roughness -d tmp_wheel/
-          WHL_FILE=$(ls tmp_wheel/*.whl | head -n 1)
-          echo "Successfully fetched $WHL_FILE from PyPI"
-          rm -f svr_roughness-*.whl
-          cp "$WHL_FILE" ./svr_roughness-latest-py3-none-any.whl
-          echo "Updated bundled wheel to: $WHL_FILE"
+          # 1. Try building directly from source repository if available
+          if git clone --depth 1 https://github.com/SullivanHart/svr-roughness.git tmp_svr 2>/dev/null; then
+            echo "Building latest svr-roughness from source repository..."
+            pip install build
+            python -m build --wheel --outdir tmp_wheel/ tmp_svr/
+          fi
+
+          WHL_FILE=$(ls tmp_wheel/*.whl 2>/dev/null | head -n 1)
+          if [ -n "$WHL_FILE" ]; then
+            rm -f svr_roughness-*.whl
+            cp "$WHL_FILE" ./svr_roughness-latest-py3-none-any.whl
+            echo "Updated bundled wheel to freshly built: $WHL_FILE"
+          elif [ -f "./svr_roughness-latest-py3-none-any.whl" ]; then
+            echo "Using repository bundled wheel: svr_roughness-latest-py3-none-any.whl"
+          else
+            echo "Downloading from PyPI..."
+            pip download --no-deps svr-roughness -d tmp_wheel/ || true
+            WHL_FILE=$(ls tmp_wheel/*.whl 2>/dev/null | head -n 1)
+            if [ -n "$WHL_FILE" ]; then
+              cp "$WHL_FILE" ./svr_roughness-latest-py3-none-any.whl
+              echo "Downloaded $WHL_FILE from PyPI"
+            fi
+          fi
 
       - name: Setup GitHub Pages
         uses: actions/configure-pages@v4

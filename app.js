@@ -240,11 +240,14 @@ function resetProgress () {
   if (progressFill) progressFill.style.width = '0%'
 }
 
+let isAnalyzing = false
+let currentAnalysisId = 0
+
 function initWorker () {
   worker = new Worker('worker.js?t=' + Date.now())
 
   worker.onmessage = function (e) {
-    const { type, text, percent, data, error } = e.data
+    const { type, text, percent, data, error, analysisId } = e.data
 
     if (type === 'status') {
       if (statusText) statusText.textContent = text
@@ -254,18 +257,24 @@ function initWorker () {
         statusDot.className = 'status-dot ready'
       }
       if (statusText && !selectedFile) statusText.textContent = 'Browser Runtime Ready'
-      if (selectedFile && !currentResult) {
+      if (selectedFile && !currentResult && !isAnalyzing) {
         startAnalysis(selectedFile)
       }
     } else if (type === 'progress') {
       if (statusDot) statusDot.className = 'status-dot analyzing'
       setProgress(percent, text)
     } else if (type === 'result') {
+      if (analysisId && analysisId !== currentAnalysisId) {
+        console.warn('Ignoring stale analysis result')
+        return
+      }
+      isAnalyzing = false
       if (statusDot) statusDot.className = 'status-dot ready'
       completeProgress('Ready')
       currentResult = data
       renderResults(data)
     } else if (type === 'error') {
+      isAnalyzing = false
       if (statusDot) statusDot.className = 'status-dot ready'
       resetProgress()
       if (resultsContainer) {
@@ -319,6 +328,8 @@ function handleFileSelect (file) {
 }
 
 async function startAnalysis (file) {
+  isAnalyzing = true
+  const thisAnalysisId = ++currentAnalysisId
   analysisStartTime = performance.now()
   if (statusDot) statusDot.className = 'status-dot analyzing'
   setProgress(18, `Loading ${file.name}...`)
@@ -360,9 +371,14 @@ async function startAnalysis (file) {
       clearInterval(statusTimer)
       statusTimer = null
 
+      if (thisAnalysisId !== currentAnalysisId) {
+        return
+      }
+
       if (resp.ok) {
         const data = await resp.json()
         if (!data.error) {
+          isAnalyzing = false
           if (statusDot) statusDot.className = 'status-dot ready'
           completeProgress('Ready')
           currentResult = data
@@ -377,6 +393,7 @@ async function startAnalysis (file) {
       }
     } catch (e) {
       if (statusTimer) clearInterval(statusTimer)
+      isAnalyzing = false
       console.error('Local Python analysis error:', e)
       if (statusDot) statusDot.className = 'status-dot ready'
       resetProgress()
@@ -401,7 +418,8 @@ async function startAnalysis (file) {
         grid_mm: parseFloat(gridPitchInput.value) || 0.2,
         short_cutoff_mm: parseFloat(shortCutoffInput.value) || 1.0,
         long_cutoff_mm: parseFloat(longCutoffInput.value) || 25.0,
-        gaussian_mesh: gaussianCheckbox.checked
+        gaussian_mesh: gaussianCheckbox.checked,
+        analysisId: thisAnalysisId
       }
     },
     [arrayBuffer]
@@ -561,6 +579,18 @@ function render3DFaces (res) {
   // Start in Part Overview with 3D point cloud scan visible first
   currentViewMode = '3d-object'
   selectOverview()
+
+  // Warm up surface point grids in idle time so face switching is instant
+  const warmUp = () => {
+    if (res.patches) {
+      res.patches.forEach(p => getOrExtractSurfaceData(p, unit, false))
+    }
+  }
+  if (window.requestIdleCallback) {
+    window.requestIdleCallback(warmUp)
+  } else {
+    setTimeout(warmUp, 60)
+  }
 }
 
 function selectOverview (options = {}) {
@@ -757,8 +787,7 @@ function selectFace (index) {
   requestAnimationFrame(() => {
     setTimeout(() => {
       updateActiveChart()
-      if (loadingOverlay) loadingOverlay.style.display = 'none'
-    }, 10)
+    }, 16)
   })
 }
 
@@ -1057,20 +1086,18 @@ function renderShapeMiniPreview () {
   ctx.restore()
 }
 
-function render3DSurface (target) {
-  if (!target) return
+function getOrExtractSurfaceData (target, unit, robust) {
+  if (!target) return null
   const svrGrid = (target.grid_svr && Array.isArray(target.grid_svr) && target.grid_svr.length > 0)
     ? target.grid_svr
     : target.grid_z
 
-  if (!svrGrid || !Array.isArray(svrGrid) || svrGrid.length === 0) {
-    console.warn('render3DSurface: No surface grid available', target)
-    return
-  }
+  if (!svrGrid || !Array.isArray(svrGrid) || svrGrid.length === 0) return null
 
-  const unit = unitSelect ? unitSelect.value : 'µm'
-  const robust = robustCheckbox ? robustCheckbox.checked : false
-  const palette = paletteSelect ? paletteSelect.value : 'Viridis'
+  let cached = target._extractedSurface
+  if (cached && cached.unit === unit && cached.robust === robust) {
+    return cached
+  }
 
   const originX = typeof target.origin_x === 'number' ? target.origin_x : 0
   const originY = typeof target.origin_y === 'number' ? target.origin_y : 0
@@ -1085,93 +1112,95 @@ function render3DSurface (target) {
     ? target.grid_z
     : svrGrid
 
+  const svrMultiplier = (unit === 'mm') ? 0.001 : (unit === 'in' ? (1.0 / 25400.0) : 1.0)
+  const zMultiplier = 0.001 // µm to mm
+
+  const validX = []
+  const validY = []
+  const validZ = []
+  const validIntensity = []
+  const invalidX = []
+  const invalidY = []
+  const invalidZ = []
+
+  let minVal = Infinity, maxVal = -Infinity
+  let flatValues = robust ? [] : null
+
+  for (let r = 0; r < numRows; r++) {
+    const sRow = svrGrid[r]
+    const zRow = zGrid[r]
+    const yVal = originY + r * pitch
+
+    for (let c = 0; c < numCols; c++) {
+      const zRaw = zRow ? zRow[c] : null
+      const sRaw = sRow ? sRow[c] : null
+      const xVal = originX + c * pitch
+
+      const hasZ = typeof zRaw === 'number' && !isNaN(zRaw)
+      const hasS = typeof sRaw === 'number' && !isNaN(sRaw)
+
+      if (hasZ && hasS) {
+        const zMm = zRaw * zMultiplier
+        const sConverted = sRaw * svrMultiplier
+        validX.push(xVal)
+        validY.push(yVal)
+        validZ.push(zMm)
+        validIntensity.push(sConverted)
+
+        if (sConverted < minVal) minVal = sConverted
+        if (sConverted > maxVal) maxVal = sConverted
+        if (flatValues) flatValues.push(sConverted)
+      } else if (hasZ) {
+        invalidX.push(xVal)
+        invalidY.push(yVal)
+        invalidZ.push(zRaw * zMultiplier)
+      }
+    }
+  }
+
+  if (target.invalid_points_local && Array.isArray(target.invalid_points_local)) {
+    target.invalid_points_local.forEach(pt => {
+      if (Array.isArray(pt) && pt.length >= 3) {
+        invalidX.push(pt[0])
+        invalidY.push(pt[1])
+        invalidZ.push(pt[2])
+      }
+    })
+  }
+
+  let cmin = isFinite(minVal) ? minVal : 0
+  let cmax = isFinite(maxVal) ? maxVal : 1
+  if (robust && flatValues && flatValues.length > 20) {
+    flatValues.sort((a, b) => a - b)
+    cmin = flatValues[Math.floor(flatValues.length * 0.01)]
+    cmax = flatValues[Math.floor(flatValues.length * 0.99)]
+  }
+
+  const res = { validX, validY, validZ, validIntensity, invalidX, invalidY, invalidZ, cmin, cmax, unit, robust, numRows, numCols, pitch }
+  target._extractedSurface = res
+  return res
+}
+
+function render3DSurface (target) {
+  if (!target) return
+
+  const unit = unitSelect ? unitSelect.value : 'µm'
+  const robust = robustCheckbox ? robustCheckbox.checked : false
+  const palette = paletteSelect ? paletteSelect.value : 'Viridis'
+
+  const extracted = getOrExtractSurfaceData(target, unit, robust)
+  if (!extracted) {
+    console.warn('render3DSurface: No surface grid available', target)
+    return
+  }
+
+  const { validX, validY, validZ, validIntensity, invalidX, invalidY, invalidZ, cmin, cmax, numRows, numCols, pitch } = extracted
+
   const isDark = getTheme() === 'dark'
   const chartBg = isDark ? '#1c1d22' : '#ffffff'
   const chartText = isDark ? '#c7cbd3' : '#0f172a'
   const gridColor = isDark ? '#2e3039' : '#e2e8f0'
   const metricLabel = `S_VR (${unit})`
-
-  // Pre-calculate unit conversion multipliers
-  const svrMultiplier = (unit === 'mm') ? 0.001 : (unit === 'in' ? (1.0 / 25400.0) : 1.0)
-  const zMultiplier = 0.001 // µm to mm
-
-  // Extract or retrieve cached discrete measurement points
-  let cached = target._extractedSurface
-  let validX, validY, validZ, validIntensity, invalidX, invalidY, invalidZ, cmin, cmax
-  if (cached && cached.unit === unit && cached.robust === robust) {
-    validX = cached.validX
-    validY = cached.validY
-    validZ = cached.validZ
-    validIntensity = cached.validIntensity
-    invalidX = cached.invalidX
-    invalidY = cached.invalidY
-    invalidZ = cached.invalidZ
-    cmin = cached.cmin
-    cmax = cached.cmax
-  } else {
-    validX = []
-    validY = []
-    validZ = []
-    validIntensity = []
-    invalidX = []
-    invalidY = []
-    invalidZ = []
-
-    let minVal = Infinity, maxVal = -Infinity
-    let flatValues = robust ? [] : null
-
-    for (let r = 0; r < numRows; r++) {
-      const sRow = svrGrid[r]
-      const zRow = zGrid[r]
-      const yVal = originY + r * pitch
-
-      for (let c = 0; c < numCols; c++) {
-        const zRaw = zRow ? zRow[c] : null
-        const sRaw = sRow ? sRow[c] : null
-        const xVal = originX + c * pitch
-
-        const hasZ = typeof zRaw === 'number' && !isNaN(zRaw)
-        const hasS = typeof sRaw === 'number' && !isNaN(sRaw)
-
-        if (hasZ && hasS) {
-          const zMm = zRaw * zMultiplier
-          const sConverted = sRaw * svrMultiplier
-          validX.push(xVal)
-          validY.push(yVal)
-          validZ.push(zMm)
-          validIntensity.push(sConverted)
-
-          if (sConverted < minVal) minVal = sConverted
-          if (sConverted > maxVal) maxVal = sConverted
-          if (flatValues) flatValues.push(sConverted)
-        } else if (hasZ) {
-          invalidX.push(xVal)
-          invalidY.push(yVal)
-          invalidZ.push(zRaw * zMultiplier)
-        }
-      }
-    }
-
-    if (target.invalid_points_local && Array.isArray(target.invalid_points_local)) {
-      target.invalid_points_local.forEach(pt => {
-        if (Array.isArray(pt) && pt.length >= 3) {
-          invalidX.push(pt[0])
-          invalidY.push(pt[1])
-          invalidZ.push(pt[2])
-        }
-      })
-    }
-
-    cmin = isFinite(minVal) ? minVal : 0
-    cmax = isFinite(maxVal) ? maxVal : 1
-    if (robust && flatValues && flatValues.length > 20) {
-      flatValues.sort((a, b) => a - b)
-      cmin = flatValues[Math.floor(flatValues.length * 0.01)]
-      cmax = flatValues[Math.floor(flatValues.length * 0.99)]
-    }
-
-    target._extractedSurface = { validX, validY, validZ, validIntensity, invalidX, invalidY, invalidZ, cmin, cmax, unit, robust }
-  }
 
   const showHeatmap = showHeatmapCheckbox ? showHeatmapCheckbox.checked : true
   const faceColor = FACE_PALETTE[activePatchIndex >= 0 ? (activePatchIndex % FACE_PALETTE.length) : 0] || '#2563eb'
@@ -1368,6 +1397,8 @@ function render3DSurface (target) {
 
   Plotly.react('chart-container', traces, layout, config).then(() => {
     Plotly.Plots.resize('chart-container')
+    const overlay = document.getElementById('chart-loading-overlay')
+    if (overlay) overlay.style.display = 'none'
   })
 }
 

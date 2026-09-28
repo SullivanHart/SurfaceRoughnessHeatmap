@@ -3,69 +3,76 @@ importScripts('https://cdn.jsdelivr.net/pyodide/v0.27.2/full/pyodide.js')
 
 let pyodideReady = false
 let pyodide = null
+let pyodideInitPromise = null
 
 self.reportProgress = function (percent, text) {
   self.postMessage({ type: 'progress', percent: percent, text: text })
 }
 
-async function initPyodide () {
-  try {
-    postMessage({ type: 'status', text: 'Initializing runtime...' })
-    pyodide = await loadPyodide({
-      indexURL: 'https://cdn.jsdelivr.net/pyodide/v0.27.2/full/'
-    })
+function initPyodide () {
+  if (pyodideReady) return Promise.resolve(pyodide)
+  if (pyodideInitPromise) return pyodideInitPromise
 
-    postMessage({ type: 'status', text: 'Loading numerical packages...' })
-    await pyodide.loadPackage(['numpy', 'scipy', 'micropip'])
-
-    postMessage({
-      type: 'status',
-      text: 'Loading svr-roughness metrology engine...'
-    })
-    const micropip = pyodide.pyimport('micropip')
-    let installed = false
-    let localWheelName = null
-    let localWheelBuildError = null
+  pyodideInitPromise = (async () => {
     try {
-      const wheelResponse = await fetch(new URL('api/wheel', self.location.href), { cache: 'no-store' })
-      if (wheelResponse.status === 503) {
-        const failure = await wheelResponse.json()
-        localWheelBuildError = failure.error || 'Local wheel build failed'
-      } else if (wheelResponse.ok) {
-        const localWheel = await wheelResponse.json()
-        localWheelName = localWheel.wheel_name || null
-      }
-    } catch (err) {
-      // Static deployments have no local wheel-building endpoint.
-    }
-    if (localWheelBuildError) throw new Error(localWheelBuildError)
+      postMessage({ type: 'status', text: 'Initializing runtime...' })
+      pyodide = await loadPyodide({
+        indexURL: 'https://cdn.jsdelivr.net/pyodide/v0.27.2/full/'
+      })
 
-    if (localWheelName) {
-      const wheelUrl = new URL(localWheelName + '?v=' + Date.now(), self.location.href).href
-      await micropip.install(wheelUrl)
-      installed = true
-      console.log('Loaded local wheel:', localWheelName)
-    } else {
-      for (const whlName of [
-        'svr_roughness-latest-py3-none-any.whl',
-        'svr_roughness-0.7.1-py3-none-any.whl'
-      ]) {
-        try {
-          const whlUrl = new URL(whlName + '?v=' + Date.now(), self.location.href).href
-          await micropip.install(whlUrl)
-          installed = true
-          console.log('Loaded bundled wheel:', whlName)
-          break
-        } catch (err) {
-          // Continue to the next bundled wheel.
+      postMessage({ type: 'status', text: 'Loading numerical packages...' })
+      await pyodide.loadPackage(['numpy', 'scipy', 'micropip'])
+
+      postMessage({
+        type: 'status',
+        text: 'Loading svr-roughness metrology engine...'
+      })
+      const micropip = pyodide.pyimport('micropip')
+      let installed = false
+      let localWheelName = null
+      let localWheelBuildError = null
+      try {
+        const wheelResponse = await fetch(new URL('api/wheel', self.location.href), { cache: 'no-store' })
+        if (wheelResponse.status === 503) {
+          const failure = await wheelResponse.json()
+          localWheelBuildError = failure.error || 'Local wheel build failed'
+        } else if (wheelResponse.ok) {
+          const localWheel = await wheelResponse.json()
+          localWheelName = localWheel.wheel_name || null
+        }
+      } catch (err) {
+        // Static deployments have no local wheel-building endpoint.
+      }
+      if (localWheelBuildError) throw new Error(localWheelBuildError)
+
+      if (localWheelName) {
+        const wheelUrl = new URL(localWheelName + '?v=' + Date.now(), self.location.href).href
+        await micropip.install(wheelUrl)
+        installed = true
+        console.log('Loaded local wheel:', localWheelName)
+      } else {
+        for (const whlName of [
+          'svr_roughness-latest-py3-none-any.whl',
+          'svr_roughness-0.7.3-py3-none-any.whl',
+          'svr_roughness-0.7.2-py3-none-any.whl',
+          'svr_roughness-0.7.1-py3-none-any.whl'
+        ]) {
+          try {
+            const whlUrl = new URL(whlName + '?v=' + Date.now(), self.location.href).href
+            await micropip.install(whlUrl)
+            installed = true
+            console.log('Loaded bundled wheel:', whlName)
+            break
+          } catch (err) {
+            // Continue to the next bundled wheel.
+          }
         }
       }
-    }
 
-    if (!installed) {
-      console.warn('Bundled wheel not found; fetching latest svr-roughness from PyPI...')
-      await micropip.install('svr-roughness')
-    }
+      if (!installed) {
+        console.warn('Bundled wheel not found; fetching latest svr-roughness from PyPI...')
+        await micropip.install('svr-roughness')
+      }
 
     // Setup Python analysis helper
     pyodide.runPython(`
@@ -278,10 +285,15 @@ def run_analysis_payload(file_path_str, file_name, grid_mm, short_cutoff_mm, lon
             }
         }
     else:
-        report(36, f"3D object scan detected ({len(pts):,} pts): Decomposing into surface faces...")
+        report(36, f"3D object scan detected ({len(pts):,} pts): Segmenting faces...")
         decomp_cfg = DecompositionConfig()
-        obj_res = decompose_3d_object(pts, config=conf, decomp_config=decomp_cfg)
+        def on_decomp_progress(stage_name, fraction):
+            pct = int(36 + fraction * 58)
+            report(pct, f"3D scan ({len(pts):,} pts): {stage_name}...")
+
+        obj_res = decompose_3d_object(pts, config=conf, decomp_config=decomp_cfg, progress=on_decomp_progress)
         t_analyze = time.perf_counter()
+        report(95, "Formatting surface metrics and topography...")
 
         patches_data = []
         for p in obj_res.patches:
@@ -431,10 +443,15 @@ def run_analysis_payload(file_path_str, file_name, grid_mm, short_cutoff_mm, lon
 
     pyodideReady = true
     postMessage({ type: 'ready' })
+    return pyodide
   } catch (err) {
+    pyodideInitPromise = null
     postMessage({ type: 'error', error: err.message || err.toString() })
+    throw err
   }
 }
+
+let currentWorkerJobId = 0
 
 self.onmessage = async function (e) {
   const { type, payload } = e.data
@@ -442,17 +459,23 @@ self.onmessage = async function (e) {
     if (!pyodideReady) await initPyodide()
     else postMessage({ type: 'ready' })
   } else if (type === 'analyze') {
-    if (!pyodideReady) {
-      await initPyodide()
-    }
+    const thisJobId = ++currentWorkerJobId
     try {
+      if (!pyodideReady) {
+        await initPyodide()
+      }
+      if (thisJobId !== currentWorkerJobId) {
+        return
+      }
+
       const {
         fileData,
         fileName,
         grid_mm,
         short_cutoff_mm,
         long_cutoff_mm,
-        gaussian_mesh
+        gaussian_mesh,
+        analysisId
       } = payload
 
       const ext = fileName.includes('.') ? '.' + fileName.split('.').pop() : ''
@@ -470,10 +493,15 @@ self.onmessage = async function (e) {
       const jsonStr = pyodide.runPython(`
 run_analysis_payload(_file_path, _file_name, _grid_mm, _short_cutoff_mm, _long_cutoff_mm, _gaussian_mesh)
 `)
+      if (thisJobId !== currentWorkerJobId) {
+        return
+      }
       const result = JSON.parse(jsonStr)
-      postMessage({ type: 'result', data: result })
+      postMessage({ type: 'result', data: result, analysisId: analysisId })
     } catch (err) {
-      postMessage({ type: 'error', error: err.message || err.toString() })
+      if (thisJobId === currentWorkerJobId) {
+        postMessage({ type: 'error', error: err.message || err.toString() })
+      }
     }
   }
 }
