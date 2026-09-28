@@ -21,7 +21,7 @@ function initPyodide () {
       })
 
       postMessage({ type: 'status', text: 'Loading numerical packages...' })
-      await pyodide.loadPackage(['numpy', 'scipy'])
+      await pyodide.loadPackage(['numpy', 'scipy', 'micropip'])
 
       postMessage({
         type: 'status',
@@ -62,29 +62,11 @@ if target_dir not in sys.path:
       } else {
         postMessage({
           type: 'status',
-          text: 'Loading bundled svr-roughness wheel...'
+          text: 'Loading svr-roughness from PyPI...'
         })
-        const whlUrl = new URL('svr_roughness-latest-py3-none-any.whl', self.location.href).href
-        const resp = await fetch(whlUrl, { cache: 'no-store' })
-        if (!resp.ok) {
-          throw new Error(`Failed to load bundled wheel (${whlUrl}): HTTP ${resp.status} ${resp.statusText}`)
-        }
-        const buf = await resp.arrayBuffer()
-        const vfsPath = '/home/pyodide/engine.whl'
-        pyodide.FS.writeFile(vfsPath, new Uint8Array(buf))
-        pyodide.globals.set('_local_whl_path', vfsPath)
-        pyodide.runPython(`
-import sys
-import zipfile
-target_dir = next((p for p in sys.path if "site-packages" in p), None)
-if not target_dir:
-    target_dir = "/lib/python3.12/site-packages"
-with zipfile.ZipFile(_local_whl_path) as zf:
-    zf.extractall(target_dir)
-if target_dir not in sys.path:
-    sys.path.insert(0, target_dir)
-`)
-        console.log('[Worker] Loaded bundled wheel from site build: svr_roughness-latest-py3-none-any.whl')
+        const micropip = pyodide.pyimport('micropip')
+        await micropip.install('svr-roughness')
+        console.log('[Worker] Installed svr-roughness from PyPI')
       }
 
     // Setup Python analysis helper

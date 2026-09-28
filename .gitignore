@@ -2,5 +2,3 @@ __pycache__/
 *.pyc
 tmp_wheel/
 *.whl
-!svr_roughness-latest-py3-none-any.whl
-
