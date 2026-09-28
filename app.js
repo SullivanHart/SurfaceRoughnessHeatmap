@@ -722,13 +722,16 @@ function selectFace (index) {
 
   currentViewMode = '3d-surface'
   if (pointCloudViewer) {
+    if (pointCloudViewer.animating) {
+      cancelAnimationFrame(pointCloudViewer.animating)
+      pointCloudViewer.animating = null
+    }
+    pointCloudViewer.dampingActive = false
     pointCloudViewer.setActivePatch(index)
-    pointCloudViewer.alignToFace(index)
   }
 
-  // Render Variogram & Mini-Preview FIRST so that right KPI card expands to its full inspection content height
+  // Render corner 3D shape thumbnail (now fast batch canvas)
   renderShapeMiniPreview()
-  renderVariogram(patch)
 
   const kpiCardElem = document.getElementById('kpi-card')
   const chartCardElem = document.querySelector('.chart-card')
@@ -747,18 +750,14 @@ function selectFace (index) {
     chartContainer.style.display = 'block'
   }
   if (pcCanvas) pcCanvas.style.display = 'none'
-  if (loadingOverlay) loadingOverlay.style.display = 'flex'
 
-  // Yield to browser to paint active pill & loading spinner before heavy Plotly render
+  // Render 3D topography surface immediately
+  updateActiveChart()
+  if (loadingOverlay) loadingOverlay.style.display = 'none'
+
+  // Render Variogram in next animation frame to keep face transition instant
   requestAnimationFrame(() => {
-    setTimeout(() => {
-      updateActiveChart()
-      if (loadingOverlay) loadingOverlay.style.display = 'none'
-      const cont = document.getElementById('chart-container')
-      if (cont && window.Plotly) {
-        Plotly.Plots.resize(cont)
-      }
-    }, 20)
+    renderVariogram(patch)
   })
 }
 
@@ -1248,6 +1247,8 @@ function render3DSurface (target) {
     autosize: true,
     height: targetHeight,
     margin: { l: 65, r: 85, t: 30, b: 60 },
+    hovermode: 'closest',
+    hoverdistance: 3,
     uirevision: (target.name || 'surface') + '_' + currentViewMode,
     scene: {
       xaxis: {
@@ -1259,6 +1260,7 @@ function render3DSurface (target) {
         linecolor: isDark ? '#4b5563' : '#94a3b8',
         zeroline: false,
         nticks: 6,
+        showspikes: false,
         tickfont: { size: 10, color: chartText }
       },
       yaxis: {
@@ -1270,6 +1272,7 @@ function render3DSurface (target) {
         linecolor: isDark ? '#4b5563' : '#94a3b8',
         zeroline: false,
         nticks: 6,
+        showspikes: false,
         tickfont: { size: 10, color: chartText }
       },
       zaxis: {
@@ -1297,6 +1300,9 @@ function render3DSurface (target) {
   const config = {
     responsive: true,
     displaylogo: false,
+    plotGlPixelRatio: Math.min(1.5, window.devicePixelRatio || 1),
+    scrollZoom: true,
+    doubleClick: false,
     modeBarButtonsToAdd: [
       {
         name: 'Reset to Aerial (Top-Down) View',
@@ -1359,40 +1365,7 @@ function render3DSurface (target) {
     })
   }
 
-  Plotly.react('chart-container', traces, layout, config).then(() => {
-    Plotly.Plots.resize('chart-container')
-  })
-
-
-  if (chartContainerElem && !chartContainerElem._zaxisListenerAttached) {
-    chartContainerElem._zaxisListenerAttached = true
-    chartContainerElem.on('plotly_relayout', function (eventData) {
-      if (!eventData || !eventData['scene.camera']) return
-      const cam = eventData['scene.camera']
-      if (!cam || !cam.eye) return
-      const isAerial = Math.abs(cam.eye.x) < 0.12 && Math.abs(cam.eye.y) < 0.12 && (cam.eye.z > 1.2 || cam.projection?.type === 'orthographic')
-      const currentZTitle = chartContainerElem.layout?.scene?.zaxis?.title?.text || ''
-      const hasZTitle = currentZTitle.length > 0
-      if (isAerial && hasZTitle) {
-        Plotly.relayout(chartContainerElem, {
-          'scene.zaxis.title.text': '',
-          'scene.zaxis.showticklabels': false,
-          'scene.zaxis.showgrid': false,
-          'scene.zaxis.showline': false
-        })
-      } else if (!isAerial && !hasZTitle) {
-        const dark = getTheme() === 'dark'
-        Plotly.relayout(chartContainerElem, {
-          'scene.zaxis.title.text': 'Elevation Z (mm)',
-          'scene.zaxis.showticklabels': true,
-          'scene.zaxis.showgrid': true,
-          'scene.zaxis.showline': true,
-          'scene.zaxis.linecolor': dark ? '#4b5563' : '#94a3b8',
-          'scene.zaxis.gridcolor': dark ? '#2e3039' : '#e2e8f0'
-        })
-      }
-    })
-  }
+  Plotly.react('chart-container', traces, layout, config)
 }
 
 function initPointCloudViewer () {
@@ -1799,7 +1772,8 @@ function updatePlotlyPointSize (sz) {
     pendingPlotlySize = null
     const chartContainerElem = document.getElementById('chart-container')
     if (chartContainerElem && chartContainerElem.data && chartContainerElem.data.length > 0) {
-      Plotly.restyle('chart-container', { 'marker.size': targetSz })
+      const traceIndices = chartContainerElem.data.length > 1 ? [0, 1] : [0]
+      Plotly.restyle('chart-container', { 'marker.size': targetSz }, traceIndices)
         .catch(() => {})
         .finally(() => {
           plotlyRestyleInProgress = false
