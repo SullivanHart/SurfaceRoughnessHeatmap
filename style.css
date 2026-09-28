@@ -571,7 +571,7 @@ details.standards-panel[open] summary {
   border-radius: 2px;
   padding: 0.5rem;
   height: 100%;
-  min-height: 540px;
+  min-height: 580px;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -581,9 +581,48 @@ details.standards-panel[open] summary {
   flex: 1;
   width: 100%;
   height: 100%;
-  min-height: 520px;
+  min-height: 580px;
   overflow: hidden;
   position: relative;
+}
+
+.chart-loading-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: var(--bg-surface);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  z-index: 20;
+  gap: 0.75rem;
+  opacity: 0.95;
+  transition: opacity 0.15s ease;
+}
+
+.chart-loading-overlay .spinner {
+  width: 30px;
+  height: 30px;
+  border: 3px solid var(--border-color);
+  border-top-color: var(--isu-cardinal);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+
+.chart-loading-overlay .loading-label {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  font-family: var(--font-sans);
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 #pointcloud-canvas {
@@ -836,153 +875,6 @@ details.standards-panel[open] summary {
   background: var(--primary-hover);
 }
 
-/* ── 3D View Toggle & Point Cloud ─────────────────────────── */
-
-.chart-card-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-  padding: 0.4rem 0.6rem 0.55rem;
-  border-bottom: 1px solid var(--border-subtle);
-  margin-bottom: 0.35rem;
-}
-
-.viewport-controls-group {
-  display: flex;
-  align-items: center;
-  gap: 0.55rem;
-  flex-wrap: wrap;
-}
-
-.chart-card-title {
-  font-family: var(--font-sans);
-  font-size: 0.85rem;
-  font-weight: 700;
-  color: var(--text-main);
-  letter-spacing: -0.01em;
-}
-
-/* Metrology Tool Buttons (Camera presets) */
-.cam-presets-bar {
-  display: inline-flex;
-  background: var(--bg-subtle);
-  border: 1px solid var(--border-color);
-  border-radius: 2px;
-  padding: 2px;
-  gap: 2px;
-}
-
-.tool-btn {
-  background: transparent;
-  border: none;
-  color: var(--text-secondary);
-  font-size: 0.72rem;
-  font-weight: 600;
-  padding: 0.25rem 0.45rem;
-  border-radius: 2px;
-  cursor: pointer;
-  transition: all 0.12s ease;
-  user-select: none;
-}
-
-.tool-btn:hover {
-  background: var(--bg-surface);
-  color: var(--text-main);
-}
-
-.tool-btn:active {
-  background: var(--isu-cardinal-subtle);
-  color: var(--isu-cardinal);
-}
-
-.view-toggle-bar {
-  position: absolute;
-  top: 0.75rem;
-  left: 0.75rem;
-  z-index: 10;
-  display: inline-flex;
-  background: var(--bg-surface);
-  border: 1px solid var(--border-color);
-  border-radius: 3px;
-  padding: 2px;
-  gap: 2px;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
-}
-
-.view-toggle-btn {
-  background: transparent;
-  border: none;
-  color: var(--text-muted);
-  font-size: 0.76rem;
-  font-weight: 600;
-  padding: 0.3rem 0.6rem;
-  border-radius: 2px;
-  cursor: pointer;
-  transition: all 0.12s ease;
-}
-
-.view-toggle-btn:hover {
-  color: var(--text-main);
-  background: var(--bg-surface);
-}
-
-.view-toggle-btn.active {
-  background: var(--bg-surface);
-  color: var(--isu-cardinal);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
-  font-weight: 700;
-}
-
-.pts-size-control {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.4rem;
-  background: var(--bg-subtle);
-  border: 1px solid var(--border-color);
-  padding: 0.2rem 0.5rem;
-  border-radius: 2px;
-  font-size: 0.72rem;
-  color: var(--text-secondary);
-}
-
-.pts-size-label {
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  font-size: 0.62rem;
-  color: var(--text-muted);
-}
-
-.pts-size-slider {
-  width: 68px;
-  height: 4px;
-  cursor: pointer;
-  accent-color: var(--isu-cardinal);
-}
-
-.pts-size-val {
-  font-family: var(--font-mono);
-  font-weight: 700;
-  color: var(--text-main);
-  min-width: 2.2rem;
-  font-size: 0.68rem;
-}
-
-#pointcloud-canvas {
-  flex: 1;
-  width: 100%;
-  height: 500px;
-  display: none;
-  outline: none;
-  cursor: grab;
-  border-radius: 2px;
-}
-
-#pointcloud-canvas:active {
-  cursor: grabbing;
-}
 
 /* ── Face Navigation Tabs (Multi-Face) ───────────────────── */
 

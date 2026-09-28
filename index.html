@@ -8,7 +8,7 @@
     <!-- Plotly.js for interactive 2D Heatmap & 3D Topography -->
     <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
     <!-- High-Performance Native WebGL 3D Point Cloud Engine -->
-    <script src="pointcloud-viewer.js"></script>
+    <script src="pointcloud-viewer.js?v=0.7.4"></script>
   </head>
   <body>
     <div class="app-container">
@@ -95,6 +95,10 @@
             </select>
           </div>
           <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.4rem;">
+            <input type="checkbox" id="show-heatmap" checked />
+            <label for="show-heatmap" class="form-label" style="font-size: 0.78rem;">Show Heatmap Overlay</label>
+          </div>
+          <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.4rem;">
             <input type="checkbox" id="robust-contrast" checked />
             <label for="robust-contrast" class="form-label" style="font-size: 0.78rem;">Robust Contrast (1st–99th %tile)</label>
           </div>
@@ -157,6 +161,10 @@
           <!-- Main Viewport (3) : Metrics (1) Grid -->
           <div class="dashboard-grid">
             <div class="chart-card">
+              <div id="chart-loading-overlay" class="chart-loading-overlay" style="display: none;">
+                <div class="spinner"></div>
+                <div class="loading-label" id="chart-loading-text">Rendering Face Topography...</div>
+              </div>
               <!-- Canvas and Plot Containers -->
               <div id="chart-container"></div>
               <canvas id="pointcloud-canvas" style="display: none;"></canvas>
@@ -223,10 +231,7 @@
                       <th>Target Surface</th>
                       <th>Dimensions</th>
                       <th>Surface Area</th>
-                      <th>Points</th>
                       <th>S<sub>VR</sub></th>
-                      <th>S<sub>a</sub></th>
-                      <th>S<sub>q</sub></th>
                       <th>SCRATA Equivalent</th>
                     </tr>
                   </thead>
@@ -247,6 +252,6 @@
       </main>
     </div>
 
-    <script src="app.js"></script>
+    <script src="app.js?v=0.7.4"></script>
   </body>
 </html>

@@ -24,20 +24,41 @@ async function initPyodide () {
     })
     const micropip = pyodide.pyimport('micropip')
     let installed = false
-    const candidateWheels = [
-      'svr_roughness-latest-py3-none-any.whl',
-      'svr_roughness-0.7.1-py3-none-any.whl'
-    ]
+    let localWheelName = null
+    let localWheelBuildError = null
+    try {
+      const wheelResponse = await fetch(new URL('api/wheel', self.location.href), { cache: 'no-store' })
+      if (wheelResponse.status === 503) {
+        const failure = await wheelResponse.json()
+        localWheelBuildError = failure.error || 'Local wheel build failed'
+      } else if (wheelResponse.ok) {
+        const localWheel = await wheelResponse.json()
+        localWheelName = localWheel.wheel_name || null
+      }
+    } catch (err) {
+      // Static deployments have no local wheel-building endpoint.
+    }
+    if (localWheelBuildError) throw new Error(localWheelBuildError)
 
-    for (const whlName of candidateWheels) {
-      try {
-        const whlUrl = new URL(whlName + '?v=' + Date.now(), self.location.href).href
-        await micropip.install(whlUrl)
-        installed = true
-        console.log('Loaded bundled wheel:', whlName)
-        break
-      } catch (err) {
-        // continue to next candidate
+    if (localWheelName) {
+      const wheelUrl = new URL(localWheelName + '?v=' + Date.now(), self.location.href).href
+      await micropip.install(wheelUrl)
+      installed = true
+      console.log('Loaded local wheel:', localWheelName)
+    } else {
+      for (const whlName of [
+        'svr_roughness-latest-py3-none-any.whl',
+        'svr_roughness-0.7.1-py3-none-any.whl'
+      ]) {
+        try {
+          const whlUrl = new URL(whlName + '?v=' + Date.now(), self.location.href).href
+          await micropip.install(whlUrl)
+          installed = true
+          console.log('Loaded bundled wheel:', whlName)
+          break
+        } catch (err) {
+          // Continue to the next bundled wheel.
+        }
       }
     }
 
@@ -65,7 +86,7 @@ def report(pct, text):
     except Exception:
         pass
 
-from svr_roughness.algorithm import analyze_pure_python, compute_heatmap_grid
+from svr_roughness.algorithm import analyze_pure_python, compute_heatmap_grid, interpolate_heatmap_at_points
 from svr_roughness.config import RoughnessConfig
 from svr_roughness.io import load_points
 from svr_roughness.result import format_report, RoughnessResult, PlaneFit
@@ -205,10 +226,19 @@ def run_analysis_payload(file_path_str, file_name, grid_mm, short_cutoff_mm, lon
         stride_light = max(1, len(pts) // 4000)
         sample_pts = np.round(pts[::stride_light], 2).tolist()
 
+        pt_svr_b64 = None
+        if grid_svr_um is not None and plane is not None and len(raw_f32) > 0:
+            diff = raw_f32 - plane.centroid
+            u = np.dot(diff, plane.x_axis)
+            v = np.dot(diff, plane.y_axis)
+            orig_x = float(res.grid_origin_mm[0]) if res.grid_origin_mm is not None else 0.0
+            orig_y = float(res.grid_origin_mm[1]) if res.grid_origin_mm is not None else 0.0
+            pt_svr = interpolate_heatmap_at_points(grid_svr_um, orig_x, orig_y, grid_mm, u, v)
+            pt_svr = np.nan_to_num(pt_svr, nan=float(res.svr_um))
+            pt_svr_b64 = base64.b64encode(np.ascontiguousarray(pt_svr).tobytes()).decode("ascii")
+
         elev_g = res.elevation_grid_mm if hasattr(res, "elevation_grid_mm") and res.elevation_grid_mm is not None else res.grid_z_mm
         gz = elev_g * 1000.0 if elev_g is not None else None
-        if gz is not None and grid_svr_um is not None:
-            gz = np.where(np.isnan(grid_svr_um), np.nan, gz)
         grid_z = np.where(np.isnan(gz), None, np.round(gz, 2)).tolist() if gz is not None else []
 
         out = {
@@ -229,6 +259,7 @@ def run_analysis_payload(file_path_str, file_name, grid_mm, short_cutoff_mm, lon
             "sample_points_b64": sample_b64,
             "sample_points_count": len(raw_f32),
             "sample_points_3d": sample_pts,
+            "sample_svr_b64": pt_svr_b64,
             "grid_width": int(res.grid_width),
             "grid_height": int(res.grid_height),
             "origin_x": float(res.grid_origin_mm[0]),
@@ -248,7 +279,7 @@ def run_analysis_payload(file_path_str, file_name, grid_mm, short_cutoff_mm, lon
         }
     else:
         report(36, f"3D object scan detected ({len(pts):,} pts): Decomposing into surface faces...")
-        decomp_cfg = DecompositionConfig(plane_distance_thresh_mm=2.0, edge_margin_mm=1.5)
+        decomp_cfg = DecompositionConfig()
         obj_res = decompose_3d_object(pts, config=conf, decomp_config=decomp_cfg)
         t_analyze = time.perf_counter()
 
@@ -260,18 +291,47 @@ def run_analysis_payload(file_path_str, file_name, grid_mm, short_cutoff_mm, lon
             coverage_pct = float(np.count_nonzero(~np.isnan(r.grid)) / r.grid.size * 100.0) if (r.grid is not None and r.grid.size > 0) else 0.0
             comparators = r.comparator_equivalents() if hasattr(r, "comparator_equivalents") else make_comparators(r.svr_um)
 
-            # Full raw points per face binary encoding (zero downsampling up to 300k pts/face)
+            # Sampled points and per-point local Svr values
             stride_pts = max(1, len(p.points) // 300000)
-            raw_f32 = np.ascontiguousarray(p.points[::stride_pts], dtype=np.float32)
+            sampled_pts = p.points[::stride_pts]
+            raw_f32 = np.ascontiguousarray(sampled_pts, dtype=np.float32)
             sample_b64 = base64.b64encode(raw_f32.tobytes()).decode("ascii")
             stride_light = max(1, len(p.points) // 3000)
             sample_pts = np.round(p.points[::stride_light], 2).tolist()
 
+            # Compute local SVR for each sampled 3D point via continuous bilinear interpolation
+            pt_svr_b64 = None
+            if hmap is not None and r.plane is not None and len(sampled_pts) > 0:
+                diff = sampled_pts - r.plane.centroid
+                u = np.dot(diff, r.plane.x_axis)
+                v = np.dot(diff, r.plane.y_axis)
+                orig_x = float(r.grid_origin_mm[0]) if r.grid_origin_mm is not None else 0.0
+                orig_y = float(r.grid_origin_mm[1]) if r.grid_origin_mm is not None else 0.0
+                pt_svr = interpolate_heatmap_at_points(hmap, orig_x, orig_y, grid_mm, u, v)
+                pt_svr = np.nan_to_num(pt_svr, nan=float(r.svr_um if hasattr(r, "svr_um") else 0.0))
+                pt_svr_b64 = base64.b64encode(np.ascontiguousarray(pt_svr).tobytes()).decode("ascii")
+
             elev_g = r.elevation_grid if hasattr(r, "elevation_grid") and r.elevation_grid is not None else r.grid
             gz = elev_g * 1000.0 if elev_g is not None else None
-            if gz is not None and hmap is not None:
-                gz = np.where(np.isnan(hmap), np.nan, gz)
             grid_z = np.where(np.isnan(gz), None, np.round(gz, 2)).tolist() if gz is not None else []
+
+            # Invalid/edge points belonging to this face
+            inv_pts = p.invalid_points if hasattr(p, "invalid_points") and p.invalid_points is not None else np.zeros((0, 3))
+            inv_local_pts = []
+            if len(inv_pts) > 0:
+                stride_inv = max(1, len(inv_pts) // 300000)
+                raw_inv_f32 = np.ascontiguousarray(inv_pts[::stride_inv], dtype=np.float32)
+                inv_b64 = base64.b64encode(raw_inv_f32.tobytes()).decode("ascii")
+                inv_sample_pts = np.round(inv_pts, 2).tolist()
+                if r.plane is not None:
+                    diff_inv = inv_pts - r.plane.centroid
+                    u_inv = np.dot(diff_inv, r.plane.x_axis)
+                    v_inv = np.dot(diff_inv, r.plane.y_axis)
+                    z_inv = np.dot(diff_inv, r.plane.normal)
+                    inv_local_pts = np.round(np.column_stack((u_inv, v_inv, z_inv)), 3).tolist()
+            else:
+                inv_b64 = None
+                inv_sample_pts = []
 
             patches_data.append({
                 "patch_id": p.patch_id,
@@ -281,6 +341,7 @@ def run_analysis_payload(file_path_str, file_name, grid_mm, short_cutoff_mm, lon
                 "area_mm2": round(float(p.area_mm2), 1),
                 "dims_mm": [round(float(x), 1) for x in p.dims_mm],
                 "point_count": int(p.point_count),
+                "invalid_points_count": int(len(inv_pts)),
                 "is_astm_compliant": bool(p.is_astm_compliant),
                 "sa_um": r.sa_um,
                 "sq_um": r.sq_um,
@@ -293,6 +354,10 @@ def run_analysis_payload(file_path_str, file_name, grid_mm, short_cutoff_mm, lon
                 "sample_points_b64": sample_b64,
                 "sample_points_count": len(raw_f32),
                 "sample_points_3d": sample_pts,
+                "sample_svr_b64": pt_svr_b64,
+                "invalid_points_b64": inv_b64,
+                "invalid_points_3d": inv_sample_pts,
+                "invalid_points_local": inv_local_pts,
                 "grid_width": int(r.grid.shape[1]) if r.grid is not None else 0,
                 "grid_height": int(r.grid.shape[0]) if r.grid is not None else 0,
                 "origin_x": float(r.grid_origin_mm[0]) if r.grid_origin_mm is not None else 0.0,

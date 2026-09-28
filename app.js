@@ -16,6 +16,7 @@ const progressFill = document.getElementById('progress-fill')
 const unitSelect = document.getElementById('unit-select')
 const paletteSelect = document.getElementById('palette-select')
 const robustCheckbox = document.getElementById('robust-contrast')
+const showHeatmapCheckbox = document.getElementById('show-heatmap')
 const showUnassignedCheckbox = document.getElementById('show-unassigned')
 const gridPitchInput = document.getElementById('grid-pitch')
 const shortCutoffInput = document.getElementById('short-cutoff')
@@ -34,7 +35,7 @@ let activePatchIndex = 0
 let isLocalBackend = false
 let currentViewMode = '3d-surface' // '2d' | '3d-surface' | '3d-object'
 let previousViewMode = null
-let pointCloudMarkerSize = 1.0
+let pointCloudMarkerSize = 0.5
 let pointCloudViewer = null
 let lastLoadedResult = null
 const FACE_PALETTE = [
@@ -183,28 +184,32 @@ function setProgress (percent, text) {
   if (!progressInterval) {
     progressInterval = setInterval(() => {
       if (currentPercent < targetPercent) {
-        const step = Math.max(0.5, (targetPercent - currentPercent) * 0.25)
+        const step = Math.max(0.4, (targetPercent - currentPercent) * 0.15)
         currentPercent = Math.min(targetPercent, currentPercent + step)
-      } else if (targetPercent < 98) {
-        currentPercent = Math.min(targetPercent + 3.5, currentPercent + 0.08)
+      } else if (currentPercent < 95) {
+        // Continuous organic progress that never stalls during backend/worker processing
+        const remaining = 95 - currentPercent
+        currentPercent += Math.max(0.04, remaining * 0.012)
       }
       if (progressFill) {
         progressFill.style.width = currentPercent.toFixed(1) + '%'
       }
-    }, 30)
+    }, 35)
   }
 }
 
 function completeProgress (text) {
   targetPercent = 100
-  currentPercent = 100
-  if (progressFill) progressFill.style.width = '100%'
   if (statusText && text) statusText.textContent = text
 
   if (progressInterval) {
     clearInterval(progressInterval)
     progressInterval = null
   }
+
+  // Smooth final animation to 100%
+  currentPercent = 100
+  if (progressFill) progressFill.style.width = '100%'
 
   if (completeTimeout) clearTimeout(completeTimeout)
   completeTimeout = setTimeout(() => {
@@ -215,7 +220,7 @@ function completeProgress (text) {
       if (progressFill) progressFill.style.width = '0%'
     }
     completeTimeout = null
-  }, 400)
+  }, 450)
 }
 
 function resetProgress () {
@@ -242,13 +247,12 @@ function initWorker () {
     if (type === 'status') {
       if (statusText) statusText.textContent = text
     } else if (type === 'ready') {
-      if (!isLocalBackend) {
-        if (statusDot) {
-          statusDot.className = 'status-dot ready'
-        }
-        if (statusText) statusText.textContent = 'Browser Runtime Ready'
+      if (isLocalBackend || currentResult) return
+      if (statusDot && statusDot.className !== 'status-dot analyzing') {
+        statusDot.className = 'status-dot ready'
       }
-      if (selectedFile) {
+      if (statusText && !selectedFile) statusText.textContent = 'Browser Runtime Ready'
+      if (selectedFile && !currentResult) {
         startAnalysis(selectedFile)
       }
     } else if (type === 'progress') {
@@ -323,8 +327,19 @@ async function startAnalysis (file) {
   await checkLocalBackend()
 
   if (isLocalBackend) {
+    let statusTimer = null
     try {
-      setProgress(35, 'Analyzing with local Python engine...')
+      setProgress(30, 'Parsing 3D scan coordinates...')
+      statusTimer = setInterval(() => {
+        if (currentPercent >= 35 && currentPercent < 60) {
+          if (statusText) statusText.textContent = 'Segmenting 3D geometry into surface faces...'
+        } else if (currentPercent >= 60 && currentPercent < 80) {
+          if (statusText) statusText.textContent = 'Calculating areal roughness (S_VR, S_a, S_q)...'
+        } else if (currentPercent >= 80 && currentPercent < 95) {
+          if (statusText) statusText.textContent = 'Rasterizing height topography & variogram...'
+        }
+      }, 400)
+
       const query = new URLSearchParams({
         filename: file.name,
         grid_mm: gridPitchInput.value || '0.2',
@@ -340,11 +355,13 @@ async function startAnalysis (file) {
         },
         body: arrayBuffer
       })
+      clearInterval(statusTimer)
+      statusTimer = null
+
       if (resp.ok) {
         const data = await resp.json()
         if (!data.error) {
           if (statusDot) statusDot.className = 'status-dot ready'
-          if (statusText) statusText.textContent = 'Local Engine active'
           completeProgress('Ready')
           currentResult = data
           renderResults(data)
@@ -357,6 +374,7 @@ async function startAnalysis (file) {
         throw new Error(`Server returned HTTP ${resp.status}: ${errText || resp.statusText}`)
       }
     } catch (e) {
+      if (statusTimer) clearInterval(statusTimer)
       console.error('Local Python analysis error:', e)
       if (statusDot) statusDot.className = 'status-dot ready'
       resetProgress()
@@ -505,10 +523,7 @@ function render3DFaces (res) {
       <td><span class="part-pill-swatch" style="background:var(--text-muted); margin-right:6px; display:inline-block;"></span><strong>Whole Part</strong></td>
       <td>${bbox}</td>
       <td>${totalArea}</td>
-      <td>${totalPts}</td>
       <td><strong>${formatVal(res.worst_svr_um || (worstPatch ? worstPatch.svr_um : 0), unit)}</strong></td>
-      <td>${formatVal(meanSa, unit)}</td>
-      <td>${formatVal(meanSq, unit)}</td>
       <td><strong>${worstRating}</strong></td>
     `
     trOverview.addEventListener('click', () => {
@@ -525,25 +540,17 @@ function render3DFaces (res) {
       const scrataRating = patch.comparators?.['SCRATA (A802)'] || patch.comparators?.['SCRATA (ASTM A802)'] || patch.comparators?.['SCRATA'] || 'N/A'
       const dims = patch.dims_mm ? `${patch.dims_mm[0]} × ${patch.dims_mm[1]} mm` : '-'
       const area = patch.area_mm2 ? `${patch.area_mm2.toLocaleString()} mm²` : '-'
-      const pts = patch.point_count ? patch.point_count.toLocaleString() : (patch.processed_points || 0).toLocaleString()
       const color = FACE_PALETTE[idx % FACE_PALETTE.length]
 
       tr.innerHTML = `
         <td><span class="part-pill-swatch" style="background:${color}; margin-right:6px; display:inline-block;"></span><strong>${patch.name}</strong></td>
         <td>${dims}</td>
         <td>${area}</td>
-        <td>${pts}</td>
         <td><strong>${formatVal(patch.svr_um, unit)}</strong></td>
-        <td>${formatVal(patch.sa_um, unit)}</td>
-        <td>${formatVal(patch.sq_um, unit)}</td>
         <td>${scrataRating}</td>
       `
       tr.addEventListener('click', () => {
-        if (currentViewMode === '3d-object') {
-          orientFaceInOverview(idx)
-        } else {
-          selectFace(idx)
-        }
+        selectFace(idx)
       })
       facesTbody.appendChild(tr)
     })
@@ -654,9 +661,6 @@ function orientFaceInOverview (index) {
 function selectFace (index) {
   if (!currentResult || !currentResult.patches || !currentResult.patches[index]) return
   activePatchIndex = index
-  if (currentViewMode === '3d-object') {
-    currentViewMode = '3d-surface'
-  }
   const patch = currentResult.patches[index]
   const unit = unitSelect ? unitSelect.value : 'µm'
 
@@ -712,16 +716,47 @@ function selectFace (index) {
     })
   }
 
-  updateActiveChart()
+  currentViewMode = '3d-surface'
+  if (pointCloudViewer) {
+    pointCloudViewer.setActivePatch(index)
+    pointCloudViewer.alignToFace(index)
+  }
+
+  // Render Variogram & Mini-Preview FIRST so that right KPI card expands to its full inspection content height
+  renderShapeMiniPreview()
   renderVariogram(patch)
+
+  const kpiCardElem = document.getElementById('kpi-card')
+  const chartCardElem = document.querySelector('.chart-card')
+  const targetHeight = Math.max(
+    580,
+    kpiCardElem ? (kpiCardElem.offsetHeight - 16) : 580,
+    chartCardElem ? (chartCardElem.offsetHeight - 16) : 580
+  )
+
+  const chartContainer = document.getElementById('chart-container')
+  const pcCanvas = document.getElementById('pointcloud-canvas')
+  const loadingOverlay = document.getElementById('chart-loading-overlay')
+
+  if (chartContainer) {
+    chartContainer.style.height = `${targetHeight}px`
+    chartContainer.style.display = 'block'
+  }
+  if (pcCanvas) pcCanvas.style.display = 'none'
+  if (loadingOverlay) loadingOverlay.style.display = 'flex'
+
+  // Yield to browser to paint active pill & loading spinner before heavy Plotly render
+  requestAnimationFrame(() => {
+    setTimeout(() => {
+      updateActiveChart()
+      if (loadingOverlay) loadingOverlay.style.display = 'none'
+    }, 10)
+  })
 }
 
 function renderSingleSurface (res) {
   const unit = unitSelect ? unitSelect.value : 'µm'
   activePatchIndex = 0
-  if (currentViewMode === '3d-object') {
-    currentViewMode = '3d-surface'
-  }
 
   if (partNavBar) partNavBar.style.display = 'none'
 
@@ -754,10 +789,7 @@ function renderSingleSurface (res) {
       <td><span class="part-pill-swatch" style="background:var(--text-muted); margin-right:6px; display:inline-block;"></span><strong>${res.effective_name || 'Surface Scan'}</strong></td>
       <td>${dims}</td>
       <td>${area}</td>
-      <td>${pts}</td>
       <td><strong>${formatVal(res.svr_um, unit)}</strong></td>
-      <td>${formatVal(res.sa_um || 0, unit)}</td>
-      <td>${formatVal(res.sq_um || 0, unit)}</td>
       <td>${scrataRating}</td>
     `
     facesTbody.appendChild(tr)
@@ -803,8 +835,6 @@ function updateActiveChart () {
   if (!currentResult) return
 
   const isOverview = (currentResult.is_3d && activePatchIndex === -1)
-  const isFaceOrPlanar = !isOverview
-
   if (isOverview) {
     currentViewMode = '3d-object'
   }
@@ -818,19 +848,52 @@ function updateActiveChart () {
 
   const chartContainer = document.getElementById('chart-container')
   const pcCanvas = document.getElementById('pointcloud-canvas')
+  const viewToggleBar = document.getElementById('view-toggle-bar')
+  const btnViewTopo = document.getElementById('btn-view-topo')
+  const btnView3d = document.getElementById('btn-view-3d')
+
+  // Toggle view-bar buttons when inspecting a face
+  if (viewToggleBar) {
+    if (currentResult.is_3d && activePatchIndex >= 0) {
+      viewToggleBar.style.display = 'inline-flex'
+      if (btnViewTopo) btnViewTopo.classList.toggle('active', currentViewMode === '3d-surface')
+      if (btnView3d) btnView3d.classList.toggle('active', currentViewMode === '3d-object')
+    } else {
+      viewToggleBar.style.display = 'none'
+    }
+  }
 
   // Show/hide appropriate viewer element and dispatch render
   if (currentViewMode === '3d-object') {
     if (chartContainer) chartContainer.style.display = 'none'
     if (pcCanvas) pcCanvas.style.display = 'block'
     render3DObject(currentResult)
+    if (pointCloudViewer) {
+      if (activePatchIndex >= 0) {
+        pointCloudViewer.setActivePatch(activePatchIndex)
+        pointCloudViewer.alignToFace(activePatchIndex)
+      } else {
+        pointCloudViewer.setActivePatch(-1)
+      }
+      pointCloudViewer.resize()
+    }
   } else {
-    if (chartContainer) chartContainer.style.display = 'block'
+    const kpiCardElem = document.getElementById('kpi-card')
+    const chartCardElem = document.querySelector('.chart-card')
+    const targetHeight = Math.max(
+      580,
+      kpiCardElem ? (kpiCardElem.offsetHeight - 16) : 580,
+      chartCardElem ? (chartCardElem.offsetHeight - 16) : 580
+    )
+    if (chartContainer) {
+      chartContainer.style.height = `${targetHeight}px`
+      chartContainer.style.display = 'block'
+    }
     if (pcCanvas) pcCanvas.style.display = 'none'
     render3DSurface(target)
   }
 
-  // Render corner 3D shape mini-map orientation preview when on a face in 2D or 3D surface elevation mode
+  // Render corner 3D shape mini-map orientation preview when inspecting a face
   renderShapeMiniPreview()
 }
 
@@ -995,146 +1058,133 @@ function render3DSurface (target) {
     ? target.pitch_mm
     : (typeof target.grid_z_pitch_mm === 'number' ? target.grid_z_pitch_mm : 0.2)
 
-  // Flatten and filter S_VR for robust color scale percentiles
-  let flat = []
-  for (let r = 0; r < svrGrid.length; r++) {
-    for (let c = 0; c < svrGrid[r].length; c++) {
-      let v = svrGrid[r][c]
-      if (typeof v === 'number' && !isNaN(v)) {
-        if (unit === 'mm') v /= 1000.0
-        else if (unit === 'in') v /= 25400.0
-        flat.push(v)
-      }
-    }
-  }
-  flat.sort((a, b) => a - b)
+  const numRows = svrGrid.length
+  const numCols = svrGrid[0] ? svrGrid[0].length : 0
 
-  let cmin = flat.length > 0 ? flat[0] : 0
-  let cmax = flat.length > 0 ? flat[flat.length - 1] : 1
-  if (robust && flat.length > 20) {
-    cmin = flat[Math.floor(flat.length * 0.01)]
-    cmax = flat[Math.floor(flat.length * 0.99)]
-  }
-
-  // Convert S_VR grid units
-  const svrData = svrGrid.map(row =>
-    row.map(v => {
-      if (typeof v !== 'number' || isNaN(v)) return null
-      if (unit === 'mm') return v / 1000.0
-      if (unit === 'in') return v / 25400.0
-      return v
-    })
-  )
-
-  // Use actual elevation Z grid for 3D shape, colored by S_VR heatmap
   const zGrid = (target.grid_z && Array.isArray(target.grid_z) && target.grid_z.length > 0)
     ? target.grid_z
     : svrGrid
-
-  // Convert elevation Z grid from µm to mm to match physical X and Y coordinates
-  const zData = zGrid.map(row =>
-    row.map(v => {
-      if (typeof v !== 'number' || isNaN(v)) return null
-      return v / 1000.0
-    })
-  )
-
-  const numRows = zData.length
-  const numCols = zData[0] ? zData[0].length : 0
-
-  const xCoords = []
-  for (let c = 0; c < numCols; c++) xCoords.push(originX + c * pitch)
-  const yCoords = []
-  for (let r = 0; r < numRows; r++) yCoords.push(originY + r * pitch)
 
   const isDark = getTheme() === 'dark'
   const chartBg = isDark ? '#1c1d22' : '#ffffff'
   const chartText = isDark ? '#c7cbd3' : '#0f172a'
   const gridColor = isDark ? '#2e3039' : '#e2e8f0'
-
   const metricLabel = `S_VR (${unit})`
 
-  // Extract only valid non-null vertices and build clean 3D triangle mesh
+  // Pre-calculate unit conversion multipliers
+  const svrMultiplier = (unit === 'mm') ? 0.001 : (unit === 'in' ? (1.0 / 25400.0) : 1.0)
+  const zMultiplier = 0.001 // µm to mm
+
+  // Extract all valid raw discrete measurement points and invalid edge points in a single pass (no smoothing)
   const validX = []
   const validY = []
   const validZ = []
   const validIntensity = []
-  const vertIdxMap = Array.from({ length: numRows }, () => new Int32Array(numCols).fill(-1))
+  const invalidX = []
+  const invalidY = []
+  const invalidZ = []
 
-  let vertCount = 0
+  let minVal = Infinity, maxVal = -Infinity
+  let flatValues = robust ? [] : null
+
   for (let r = 0; r < numRows; r++) {
+    const sRow = svrGrid[r]
+    const zRow = zGrid[r]
+    const yVal = originY + r * pitch
+
     for (let c = 0; c < numCols; c++) {
-      const zVal = zData[r] ? zData[r][c] : null
-      const svrVal = svrData[r] ? svrData[r][c] : null
-      if (typeof zVal === 'number' && typeof svrVal === 'number' && !isNaN(zVal) && !isNaN(svrVal)) {
-        validX.push(xCoords[c])
-        validY.push(yCoords[r])
-        validZ.push(zVal)
-        validIntensity.push(svrVal)
-        vertIdxMap[r][c] = vertCount++
+      const zRaw = zRow ? zRow[c] : null
+      const sRaw = sRow ? sRow[c] : null
+      const xVal = originX + c * pitch
+
+      const hasZ = typeof zRaw === 'number' && !isNaN(zRaw)
+      const hasS = typeof sRaw === 'number' && !isNaN(sRaw)
+
+      if (hasZ && hasS) {
+        const zMm = zRaw * zMultiplier
+        const sConverted = sRaw * svrMultiplier
+        validX.push(xVal)
+        validY.push(yVal)
+        validZ.push(zMm)
+        validIntensity.push(sConverted)
+
+        if (sConverted < minVal) minVal = sConverted
+        if (sConverted > maxVal) maxVal = sConverted
+        if (flatValues) flatValues.push(sConverted)
+      } else if (hasZ) {
+        invalidX.push(xVal)
+        invalidY.push(yVal)
+        invalidZ.push(zRaw * zMultiplier)
       }
     }
   }
 
-  const triI = []
-  const triJ = []
-  const triK = []
-
-  for (let r = 0; r < numRows - 1; r++) {
-    for (let c = 0; c < numCols - 1; c++) {
-      const v00 = vertIdxMap[r][c]
-      const v10 = vertIdxMap[r + 1][c]
-      const v01 = vertIdxMap[r][c + 1]
-      const v11 = vertIdxMap[r + 1][c + 1]
-
-      if (v00 >= 0 && v10 >= 0 && v01 >= 0 && v11 >= 0) {
-        // Counter-clockwise winding seen from +Z so triangle normals point UP
-        triI.push(v00, v01)
-        triJ.push(v01, v11)
-        triK.push(v10, v10)
-      }
-    }
+  let cmin = isFinite(minVal) ? minVal : 0
+  let cmax = isFinite(maxVal) ? maxVal : 1
+  if (robust && flatValues && flatValues.length > 20) {
+    flatValues.sort((a, b) => a - b)
+    cmin = flatValues[Math.floor(flatValues.length * 0.01)]
+    cmax = flatValues[Math.floor(flatValues.length * 0.99)]
   }
+
+  const showHeatmap = showHeatmapCheckbox ? showHeatmapCheckbox.checked : true
+  const faceColor = FACE_PALETTE[activePatchIndex >= 0 ? (activePatchIndex % FACE_PALETTE.length) : 0] || '#2563eb'
 
   const trace = {
-    type: 'mesh3d',
+    type: 'scatter3d',
+    mode: 'markers',
+    name: target.name || 'Face Points',
+    showlegend: false,
     x: validX,
     y: validY,
     z: validZ,
-    i: triI,
-    j: triJ,
-    k: triK,
-    intensity: validIntensity,
-    colorscale: palette,
-    cmin: cmin,
-    cmax: cmax,
-    cauto: false,
-    showscale: true,
-    colorbar: {
-      title: {
-        text: metricLabel,
-        side: 'top',
-        font: { size: 11, color: chartText }
+    marker: showHeatmap ? {
+      size: 0.5,
+      color: validIntensity,
+      colorscale: palette,
+      cmin: cmin,
+      cmax: cmax,
+      cauto: false,
+      showscale: true,
+      colorbar: {
+        title: {
+          text: metricLabel,
+          side: 'top',
+          font: { size: 11, color: chartText }
+        },
+        len: 0.86,
+        thickness: 16,
+        x: 1.02,
+        xpad: 18,
+        tickfont: { size: 10, color: chartText }
       },
-      len: 0.86,
-      thickness: 16,
-      x: 1.02,
-      xpad: 18,
-      tickfont: { size: 10, color: chartText }
+      opacity: 1.0
+    } : {
+      size: 0.5,
+      color: faceColor,
+      showscale: false,
+      opacity: 1.0
     },
-    lighting: {
-      ambient: 1.0,
-      diffuse: 0.0,
-      specular: 0.0,
-      roughness: 1.0,
-      fresnel: 0.0
-    },
-    lightposition: { x: 100, y: 100, z: 1000 },
-    hovertemplate: `Surface X: %{x:.2f} mm<br>Surface Y: %{y:.2f} mm<br>Elevation Z: %{z:.3f} mm<br>Local S_VR: %{intensity:.4f} ${unit}<extra></extra>`
+    hovertemplate: showHeatmap
+      ? `Surface X: %{x:.2f} mm<br>Surface Y: %{y:.2f} mm<br>Elevation Z: %{z:.3f} mm<br>Local S_VR: %{marker.color:.4f} ${unit}<extra></extra>`
+      : `${target.name || 'Face'}<br>Surface X: %{x:.2f} mm<br>Surface Y: %{y:.2f} mm<br>Elevation Z: %{z:.3f} mm<extra></extra>`
   }
 
-  const xSpan = (xCoords[xCoords.length - 1] - xCoords[0]) || 1
-  const ySpan = (yCoords[yCoords.length - 1] - yCoords[0]) || 1
+  // Collect invalid and peeled edge points belonging specifically to this face
+  const showUnassigned = showUnassignedCheckbox ? showUnassignedCheckbox.checked : true
+
+  if (target.invalid_points_local && Array.isArray(target.invalid_points_local)) {
+    target.invalid_points_local.forEach(pt => {
+      if (Array.isArray(pt) && pt.length >= 3) {
+        invalidX.push(pt[0])
+        invalidY.push(pt[1])
+        invalidZ.push(pt[2])
+      }
+    })
+  }
+
+  const xSpan = (numCols > 1 ? (numCols - 1) * pitch : 1)
+  const ySpan = (numRows > 1 ? (numRows - 1) * pitch : 1)
   const aspectY = Math.max(0.2, Math.min(5.0, ySpan / Math.max(1e-3, xSpan)))
 
   const aerialCamera = {
@@ -1144,8 +1194,23 @@ function render3DSurface (target) {
     projection: { type: 'orthographic' }
   }
 
+  // Fill card vertically on 1st visit by matching right KPI card
+  const kpiCardElem = document.getElementById('kpi-card')
+  const chartCardElem = document.querySelector('.chart-card')
+  const targetHeight = Math.max(
+    580,
+    kpiCardElem ? (kpiCardElem.offsetHeight - 16) : 580,
+    chartCardElem ? (chartCardElem.offsetHeight - 16) : 580
+  )
+
+  const chartContainerElem = document.getElementById('chart-container')
+  if (chartContainerElem) {
+    chartContainerElem.style.height = `${targetHeight}px`
+  }
+
   const layout = {
     autosize: true,
+    height: targetHeight,
     margin: { l: 65, r: 85, t: 30, b: 60 },
     uirevision: (target.name || 'surface') + '_' + currentViewMode,
     scene: {
@@ -1186,6 +1251,7 @@ function render3DSurface (target) {
     },
     plot_bgcolor: chartBg,
     paper_bgcolor: chartBg,
+    showlegend: false,
     font: {
       family: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
       color: chartText
@@ -1238,30 +1304,28 @@ function render3DSurface (target) {
     modeBarButtonsToRemove: ['resetCameraDefault3d', 'resetCameraLastSave3d']
   }
 
-  const minZ = validZ.length > 0 ? Math.min(...validZ) : 0
-  const baseZ = minZ - 0.002
-  const minX = xCoords[0]
-  const maxX = xCoords[xCoords.length - 1]
-  const minY = yCoords[0]
-  const maxY = yCoords[yCoords.length - 1]
-
-  const baseTrace = {
-    type: 'mesh3d',
-    x: [minX, maxX, maxX, minX],
-    y: [minY, minY, maxY, maxY],
-    z: [baseZ, baseZ, baseZ, baseZ],
-    i: [0, 0],
-    j: [1, 2],
-    k: [2, 3],
-    color: isDark ? '#334155' : '#cbd5e1',
-    opacity: 0.95,
-    showscale: false,
-    hoverinfo: 'skip'
+  const traces = [trace]
+  if (showUnassigned && invalidX.length > 0) {
+    traces.push({
+      type: 'scatter3d',
+      mode: 'markers',
+      name: 'Unprocessed / Edge Points',
+      showlegend: false,
+      x: invalidX,
+      y: invalidY,
+      z: invalidZ,
+      marker: {
+        size: 0.5,
+        color: isDark ? '#64748b' : '#94a3b8',
+        opacity: 0.75
+      },
+      hoverinfo: 'none'
+    })
   }
 
-  Plotly.react('chart-container', [baseTrace, trace], layout, config)
+  Plotly.react('chart-container', traces, layout, config)
 
-  const chartContainerElem = document.getElementById('chart-container')
+
   if (chartContainerElem && !chartContainerElem._zaxisListenerAttached) {
     chartContainerElem._zaxisListenerAttached = true
     chartContainerElem.on('plotly_relayout', function (eventData) {
@@ -1299,45 +1363,10 @@ function initPointCloudViewer () {
     pointCloudViewer = new window.PointCloudViewer(canvas, {
       onFaceClick: faceIdx => {
         if (currentResult && currentResult.patches && currentResult.patches[faceIdx]) {
-          orientFaceInOverview(faceIdx)
+          selectFace(faceIdx)
         }
       }
     })
-
-    const btnCamAlign = document.getElementById('btn-cam-align')
-    const btnCamIso = document.getElementById('btn-cam-iso')
-    const btnCamTop = document.getElementById('btn-cam-top')
-    const btnCamFront = document.getElementById('btn-cam-front')
-    const btnCamReset = document.getElementById('btn-cam-reset')
-
-    if (btnCamAlign) {
-      btnCamAlign.addEventListener('click', () => {
-        if (pointCloudViewer) {
-          const idx = activePatchIndex >= 0 ? activePatchIndex : 0
-          pointCloudViewer.alignToFace(idx)
-        }
-      })
-    }
-    if (btnCamIso) {
-      btnCamIso.addEventListener('click', () => {
-        if (pointCloudViewer) pointCloudViewer.setCameraView('iso')
-      })
-    }
-    if (btnCamTop) {
-      btnCamTop.addEventListener('click', () => {
-        if (pointCloudViewer) pointCloudViewer.setCameraView('top')
-      })
-    }
-    if (btnCamFront) {
-      btnCamFront.addEventListener('click', () => {
-        if (pointCloudViewer) pointCloudViewer.setCameraView('front')
-      })
-    }
-    if (btnCamReset) {
-      btnCamReset.addEventListener('click', () => {
-        if (pointCloudViewer) pointCloudViewer.resetCamera()
-      })
-    }
   }
 }
 
@@ -1353,8 +1382,26 @@ function render3DObject (res) {
   pointCloudViewer.setActivePatch(activePatchIndex)
   pointCloudViewer.setPointSize(pointCloudMarkerSize)
   pointCloudViewer.setShowUnassigned(showUnassignedCheckbox ? showUnassignedCheckbox.checked : true)
+  if (pointCloudViewer.setShowHeatmap) {
+    pointCloudViewer.setShowHeatmap(showHeatmapCheckbox ? showHeatmapCheckbox.checked : true)
+  }
   pointCloudViewer.setTheme(getTheme() === 'dark')
+  if (pointCloudViewer.setPalette && paletteSelect) {
+    pointCloudViewer.setPalette(paletteSelect.value)
+  }
   pointCloudViewer.render()
+}
+
+if (showHeatmapCheckbox) {
+  showHeatmapCheckbox.addEventListener('change', () => {
+    const show = showHeatmapCheckbox.checked
+    if (pointCloudViewer && pointCloudViewer.setShowHeatmap) {
+      pointCloudViewer.setShowHeatmap(show)
+    }
+    if (currentResult && currentViewMode !== '3d-object') {
+      updateActiveChart()
+    }
+  })
 }
 
 if (showUnassignedCheckbox) {
@@ -1362,6 +1409,9 @@ if (showUnassignedCheckbox) {
     const show = showUnassignedCheckbox.checked
     if (pointCloudViewer) {
       pointCloudViewer.setShowUnassigned(show)
+    }
+    if (currentResult && currentViewMode !== '3d-object') {
+      updateActiveChart()
     }
     renderShapeMiniPreview()
   })
@@ -1437,16 +1487,20 @@ function renderHeatmap (res) {
   const chartText = isDark ? '#c7cbd3' : '#0f172a'
   const tickColor = isDark ? '#8e94a0' : '#475569'
 
+  const showHeatmap = showHeatmapCheckbox ? showHeatmapCheckbox.checked : true
+  const faceColor = FACE_PALETTE[activePatchIndex >= 0 ? (activePatchIndex % FACE_PALETTE.length) : 0]
+
   const trace = {
     z: zData,
     x: xCoords,
     y: yCoords,
     type: 'heatmap',
-    colorscale: palette,
+    colorscale: showHeatmap ? palette : [[0, faceColor], [1, faceColor]],
     zmin: zmin,
     zmax: zmax,
     zsmooth: false,
-    colorbar: {
+    showscale: showHeatmap,
+    colorbar: showHeatmap ? {
       title: {
         text: `S_VR (${unit})`,
         side: 'top',
@@ -1457,8 +1511,10 @@ function renderHeatmap (res) {
       x: 1.02,
       xpad: 18,
       tickfont: { size: 10, color: chartText }
-    },
-    hovertemplate: `Surface X: %{x:.2f} mm<br>Surface Y: %{y:.2f} mm<br>Local S_VR: %{z:.4f} ${unit}<extra></extra>`
+    } : undefined,
+    hovertemplate: showHeatmap
+      ? `Surface X: %{x:.2f} mm<br>Surface Y: %{y:.2f} mm<br>Local S_VR: %{z:.4f} ${unit}<extra></extra>`
+      : `Surface X: %{x:.2f} mm<br>Surface Y: %{y:.2f} mm<extra></extra>`
   }
 
   const unassignedGrey = isDark ? '#334155' : '#cbd5e1'
@@ -1630,7 +1686,7 @@ fileInput.addEventListener('change', e => {
   }
 })
 
-// Mini-map static thumbnail click: links back to whole part view
+// Mini-map static thumbnail click: links back to 3D scan view
 const shapeMiniPreviewElem = document.getElementById('shape-mini-preview')
 const miniPreviewCanvas = document.getElementById('mini-preview-canvas')
 
@@ -1639,10 +1695,22 @@ function handleMiniPreviewClick (e) {
     if (e.preventDefault) e.preventDefault()
     if (e.stopPropagation) e.stopPropagation()
   }
-  const faceToOrient = activePatchIndex
-  selectOverview()
-  if (typeof faceToOrient === 'number' && faceToOrient >= 0) {
-    orientFaceInOverview(faceToOrient)
+  if (!currentResult || !currentResult.patches) return
+  const faceIdx = activePatchIndex >= 0 ? activePatchIndex : 0
+
+  currentViewMode = '3d-object'
+  const chartContainer = document.getElementById('chart-container')
+  const pcCanvas = document.getElementById('pointcloud-canvas')
+  const loadingOverlay = document.getElementById('chart-loading-overlay')
+  if (loadingOverlay) loadingOverlay.style.display = 'none'
+  if (chartContainer) chartContainer.style.display = 'none'
+  if (pcCanvas) pcCanvas.style.display = 'block'
+
+  render3DObject(currentResult)
+  if (pointCloudViewer) {
+    pointCloudViewer.resize()
+    pointCloudViewer.setActivePatch(faceIdx)
+    pointCloudViewer.alignToFace(faceIdx)
   }
 }
 
@@ -1673,6 +1741,9 @@ unitSelect.addEventListener('change', () => {
   if (currentResult) renderResults(currentResult)
 })
 paletteSelect.addEventListener('change', () => {
+  if (pointCloudViewer && pointCloudViewer.setPalette) {
+    pointCloudViewer.setPalette(paletteSelect.value)
+  }
   if (currentResult) {
     updateActiveChart()
   }
@@ -1682,30 +1753,6 @@ robustCheckbox.addEventListener('change', () => {
     updateActiveChart()
   }
 })
-
-// 2D / 3D View Mode Toggle Buttons
-document.querySelectorAll('.view-toggle-btn').forEach(btn => {
-  btn.addEventListener('click', () => {
-    const view = btn.getAttribute('data-view')
-    if (view && view !== currentViewMode) {
-      currentViewMode = view
-      updateActiveChart()
-    }
-  })
-})
-
-// Point Size Slider for 3D Point Cloud View
-const ptsSizeSlider = document.getElementById('pts-size-slider')
-const ptsSizeVal = document.getElementById('pts-size-val')
-if (ptsSizeSlider) {
-  ptsSizeSlider.addEventListener('input', e => {
-    pointCloudMarkerSize = parseFloat(e.target.value) || 1.0
-    if (ptsSizeVal) ptsSizeVal.textContent = pointCloudMarkerSize.toFixed(1) + 'px'
-    if (currentViewMode === '3d-object') {
-      updatePointCloudMarkerSizes()
-    }
-  })
-}
 
 // Physical filter settings re-run analysis
 ;[gridPitchInput, shortCutoffInput, longCutoffInput, gaussianCheckbox].forEach(
@@ -1838,3 +1885,30 @@ window.addEventListener('resize', () => {
     Plotly.Plots.resize(varChart)
   }
 })
+
+// Continuously keep chart container filled vertically to match KPI card
+if (window.ResizeObserver) {
+  const kpiEl = document.getElementById('kpi-card')
+  const chartCont = document.getElementById('chart-container')
+  if (kpiEl && chartCont) {
+    let resizeTimer = null
+    const ro = new ResizeObserver(() => {
+      if (currentViewMode !== '3d-object' && chartCont.style.display !== 'none') {
+        const kpiH = kpiEl.offsetHeight
+        if (kpiH > 200) {
+          const targetH = Math.max(580, kpiH - 16)
+          if (Math.abs(chartCont.offsetHeight - targetH) > 6) {
+            chartCont.style.height = `${targetH}px`
+            clearTimeout(resizeTimer)
+            resizeTimer = setTimeout(() => {
+              if (window.Plotly && chartCont.data) {
+                Plotly.relayout(chartCont, { height: targetH })
+              }
+            }, 30)
+          }
+        }
+      }
+    })
+    ro.observe(kpiEl)
+  }
+}

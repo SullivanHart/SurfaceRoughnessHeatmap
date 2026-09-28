@@ -24,9 +24,10 @@ class PointCloudViewer {
 
     this.onFaceClick = options.onFaceClick || null
     this.isDark = true
-    this.pointSize = 1.0
+    this.pointSize = 0.5
     this.activePatchIndex = 0
     this.showUnassigned = true
+    this.showHeatmap = true
 
     // Camera & Orbit state (supports smooth inertia damping)
     this.target = [0, 0, 0]
@@ -59,25 +60,70 @@ class PointCloudViewer {
       attribute vec3 aPosition;
       attribute vec3 aColor;
       attribute float aPatchIndex;
+      attribute float aSvr;
 
       uniform mat4 uMVP;
       uniform float uPointSize;
       uniform float uActivePatchIndex;
       uniform float uShowUnassigned;
+      uniform float uShowHeatmap;
+      uniform float uSvrMin;
+      uniform float uSvrMax;
+      uniform float uColormapType; // 0 = Viridis, 1 = Jet
 
       varying vec3 vColor;
 
+      vec3 viridisColormap(float t) {
+        t = clamp(t, 0.0, 1.0);
+        const vec3 c0 = vec3(0.2777273, 0.0054073, 0.3340998);
+        const vec3 c1 = vec3(0.1050195, 1.4046116, 1.3845902);
+        const vec3 c2 = vec3(-0.3308618, 0.2148783, 0.0950952);
+        const vec3 c3 = vec3(-4.6342305, -5.7991010, -19.3324188);
+        const vec3 c4 = vec3(6.2282699, 14.1799333, 56.6905526);
+        const vec3 c5 = vec3(4.7763850, -13.7451454, -65.3530327);
+        const vec3 c6 = vec3(-5.4354559, 4.6458526, 26.3124352);
+        return c0 + t*(c1 + t*(c2 + t*(c3 + t*(c4 + t*(c5 + t*c6)))));
+      }
+
+      vec3 jetColormap(float t) {
+        t = clamp(t, 0.0, 1.0);
+        float r = clamp(1.5 - abs(4.0 * t - 3.0), 0.0, 1.0);
+        float g = clamp(1.5 - abs(4.0 * t - 2.0), 0.0, 1.0);
+        float b = clamp(1.5 - abs(4.0 * t - 1.0), 0.0, 1.0);
+        return vec3(r, g, b);
+      }
+
       void main() {
-        if (aPatchIndex < -1.5 && uShowUnassigned < 0.5) {
+        bool isInvalidOfActive = (aPatchIndex < -9.5 && (abs(aPatchIndex + 10.0 + uActivePatchIndex) < 0.1 || uActivePatchIndex < 0.0));
+        bool isGlobalUnassigned = (aPatchIndex < -1.5 && aPatchIndex > -9.5);
+
+        if ((isInvalidOfActive || isGlobalUnassigned) && uShowUnassigned < 0.5) {
           gl_Position = vec4(2.0, 2.0, 2.0, 0.0);
           gl_PointSize = 0.0;
           vColor = vec3(0.0);
           return;
         }
-        bool isActive = (aPatchIndex == uActivePatchIndex || uActivePatchIndex < 0.0);
-        vColor = isActive ? aColor : aColor * 0.58;
+
+        bool isSelf = abs(aPatchIndex - uActivePatchIndex) < 0.1;
+        bool isActive = (isSelf || isInvalidOfActive || uActivePatchIndex < 0.0);
+
+        if (uShowHeatmap > 0.5) {
+          if (aSvr > 0.0) {
+            float span = max(uSvrMax - uSvrMin, 0.001);
+            float normSvr = clamp((aSvr - uSvrMin) / span, 0.0, 1.0);
+            vec3 heatColor = (uColormapType > 0.5) ? jetColormap(normSvr) : viridisColormap(normSvr);
+            vColor = isActive ? heatColor : heatColor * 0.30;
+          } else {
+            // Neutral grey for edge/unassigned/invalid points - face colors are strictly hidden!
+            vColor = isActive ? vec3(0.65, 0.68, 0.74) : vec3(0.40, 0.42, 0.46);
+          }
+        } else {
+          // Heatmap is hidden: show designated face colors
+          vColor = isActive ? aColor : aColor * 0.25;
+        }
+
         gl_Position = uMVP * vec4(aPosition, 1.0);
-        gl_PointSize = isActive ? (uPointSize + 0.8) : uPointSize;
+        gl_PointSize = uPointSize;
       }
     `
 
@@ -106,14 +152,19 @@ class PointCloudViewer {
     this.attribs = {
       position: gl.getAttribLocation(program, 'aPosition'),
       color: gl.getAttribLocation(program, 'aColor'),
-      patchIndex: gl.getAttribLocation(program, 'aPatchIndex')
+      patchIndex: gl.getAttribLocation(program, 'aPatchIndex'),
+      svr: gl.getAttribLocation(program, 'aSvr')
     }
 
     this.uniforms = {
       mvp: gl.getUniformLocation(program, 'uMVP'),
       pointSize: gl.getUniformLocation(program, 'uPointSize'),
       activePatchIndex: gl.getUniformLocation(program, 'uActivePatchIndex'),
-      showUnassigned: gl.getUniformLocation(program, 'uShowUnassigned')
+      showUnassigned: gl.getUniformLocation(program, 'uShowUnassigned'),
+      showHeatmap: gl.getUniformLocation(program, 'uShowHeatmap'),
+      svrMin: gl.getUniformLocation(program, 'uSvrMin'),
+      svrMax: gl.getUniformLocation(program, 'uSvrMax'),
+      colormapType: gl.getUniformLocation(program, 'uColormapType')
     }
 
     // Hardware depth testing setup: Ensures nearest faces strictly occlude farther faces!
@@ -126,6 +177,7 @@ class PointCloudViewer {
     this.posBuffer = gl.createBuffer()
     this.colorBuffer = gl.createBuffer()
     this.patchBuffer = gl.createBuffer()
+    this.svrBuffer = gl.createBuffer()
   }
 
   compileShader (type, source) {
@@ -169,6 +221,7 @@ class PointCloudViewer {
     let allPos = []
     let allCol = []
     let allPatch = []
+    let allSvr = []
     this.facesMeta = []
 
     if (result.is_3d && result.patches && result.patches.length > 0) {
@@ -199,9 +252,60 @@ class PointCloudViewer {
           patches[i] = idx
         }
 
+        let svrs = null
+        let minS = Infinity, maxS = -Infinity
+        if (patch.sample_svr_b64) {
+          svrs = this.decodeBase64Float32(patch.sample_svr_b64)
+          for (let i = 0; i < svrs.length; i++) {
+            if (svrs[i] > 0) {
+              if (svrs[i] < minS) minS = svrs[i]
+              if (svrs[i] > maxS) maxS = svrs[i]
+            }
+          }
+        }
+        if (!svrs || svrs.length !== ptCount) {
+          svrs = new Float32Array(ptCount).fill(patch.svr_um || 10.0)
+        }
+        if (!isFinite(minS) || !isFinite(maxS) || maxS <= minS) {
+          minS = patch.svr_um ? patch.svr_um * 0.5 : 10.0
+          maxS = patch.svr_um ? patch.svr_um * 1.5 : 100.0
+        }
+
         allPos.push(f32)
         allCol.push(colors)
         allPatch.push(patches)
+        allSvr.push(svrs)
+
+        // Invalid / peeled edge points belonging specifically to this face
+        let invF32 = null
+        if (patch.invalid_points_b64) {
+          invF32 = this.decodeBase64Float32(patch.invalid_points_b64)
+        } else if (patch.invalid_points_3d && patch.invalid_points_3d.length > 0) {
+          const invPts = patch.invalid_points_3d
+          invF32 = new Float32Array(invPts.length * 3)
+          for (let i = 0; i < invPts.length; i++) {
+            invF32[i * 3] = invPts[i][0]
+            invF32[i * 3 + 1] = invPts[i][1]
+            invF32[i * 3 + 2] = invPts[i][2]
+          }
+        }
+
+        if (invF32 && invF32.length > 0) {
+          const invCount = invF32.length / 3
+          const invColors = new Float32Array(invCount * 3)
+          const invPatches = new Float32Array(invCount)
+          const invSvrs = new Float32Array(invCount).fill(-1.0)
+          for (let i = 0; i < invCount; i++) {
+            invColors[i * 3] = 0.65
+            invColors[i * 3 + 1] = 0.68
+            invColors[i * 3 + 2] = 0.74
+            invPatches[i] = -(idx + 10.0)
+          }
+          allPos.push(invF32)
+          allCol.push(invColors)
+          allPatch.push(invPatches)
+          allSvr.push(invSvrs)
+        }
 
         let centroid = patch.centroid
         if (!centroid && patch.sample_points_3d && patch.sample_points_3d.length > 0) {
@@ -218,9 +322,19 @@ class PointCloudViewer {
           name: patch.name || `Face ${idx + 1}`,
           centroid: centroid || [0, 0, 0],
           normal: patch.normal || patch.plane_normal || null,
-          pointCount: ptCount
+          pointCount: ptCount,
+          minSvr: minS,
+          maxSvr: maxS
         })
       })
+
+      let globalMin = Infinity, globalMax = -Infinity
+      this.facesMeta.forEach(m => {
+        if (m.minSvr < globalMin) globalMin = m.minSvr
+        if (m.maxSvr > globalMax) globalMax = m.maxSvr
+      })
+      this.globalMinSvr = isFinite(globalMin) ? globalMin : 0.0
+      this.globalMaxSvr = isFinite(globalMax) ? globalMax : 100.0
 
       // Unassigned / unprocessed points (edges, chamfers, unsegmented geometry) colored neutral grey
       let uF32 = null
@@ -240,7 +354,7 @@ class PointCloudViewer {
         const uCount = uF32.length / 3
         const uColors = new Float32Array(uCount * 3)
         const uPatches = new Float32Array(uCount)
-        // Bright neutral slate/grey color [0.65, 0.68, 0.74] matching Whole Part
+        const uSvrs = new Float32Array(uCount).fill(-1.0)
         for (let i = 0; i < uCount; i++) {
           uColors[i * 3] = 0.65
           uColors[i * 3 + 1] = 0.68
@@ -250,6 +364,7 @@ class PointCloudViewer {
         allPos.push(uF32)
         allCol.push(uColors)
         allPatch.push(uPatches)
+        allSvr.push(uSvrs)
       }
     } else {
       // Planar surface scan
@@ -270,6 +385,7 @@ class PointCloudViewer {
         const ptCount = f32.length / 3
         const colors = new Float32Array(ptCount * 3)
         const patches = new Float32Array(ptCount)
+        const svrs = new Float32Array(ptCount).fill(result.svr_um || 10.0)
         for (let i = 0; i < ptCount; i++) {
           colors[i * 3] = 0.784
           colors[i * 3 + 1] = 0.063
@@ -279,13 +395,16 @@ class PointCloudViewer {
         allPos.push(f32)
         allCol.push(colors)
         allPatch.push(patches)
+        allSvr.push(svrs)
 
         this.facesMeta.push({
           patchId: 1,
           name: result.effective_name || 'Surface',
           centroid: [0, 0, 0],
           normal: [0, 0, 1],
-          pointCount: ptCount
+          pointCount: ptCount,
+          minSvr: 10,
+          maxSvr: 100
         })
       }
     }
@@ -300,6 +419,7 @@ class PointCloudViewer {
     const mergedPos = new Float32Array(totalLen)
     const mergedCol = new Float32Array(totalLen)
     const mergedPatch = new Float32Array(totalLen / 3)
+    const mergedSvr = new Float32Array(totalLen / 3)
 
     let offsetPos = 0
     let offsetPatch = 0
@@ -307,6 +427,7 @@ class PointCloudViewer {
       mergedPos.set(allPos[i], offsetPos)
       mergedCol.set(allCol[i], offsetPos)
       mergedPatch.set(allPatch[i], offsetPatch)
+      if (allSvr[i]) mergedSvr.set(allSvr[i], offsetPatch)
       offsetPos += allPos[i].length
       offsetPatch += allPatch[i].length
     }
@@ -322,6 +443,9 @@ class PointCloudViewer {
 
     gl.bindBuffer(gl.ARRAY_BUFFER, this.patchBuffer)
     gl.bufferData(gl.ARRAY_BUFFER, mergedPatch, gl.STATIC_DRAW)
+
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.svrBuffer)
+    gl.bufferData(gl.ARRAY_BUFFER, mergedSvr, gl.STATIC_DRAW)
 
     // Compute bounding box and auto-center camera
     let minX = Infinity, minY = Infinity, minZ = Infinity
@@ -557,7 +681,7 @@ class PointCloudViewer {
   }
 
   setPointSize (sz) {
-    this.pointSize = Math.max(0.5, sz)
+    this.pointSize = Math.max(0.1, sz)
     this.requestRender()
   }
 
@@ -568,6 +692,11 @@ class PointCloudViewer {
 
   setShowUnassigned (show) {
     this.showUnassigned = !!show
+    this.requestRender()
+  }
+
+  setShowHeatmap (show) {
+    this.showHeatmap = !!show
     this.requestRender()
   }
 
@@ -768,6 +897,24 @@ class PointCloudViewer {
     gl.uniform1f(this.uniforms.pointSize, this.pointSize * (window.devicePixelRatio || 1))
     gl.uniform1f(this.uniforms.activePatchIndex, this.activePatchIndex)
     gl.uniform1f(this.uniforms.showUnassigned, this.showUnassigned ? 1.0 : 0.0)
+    if (this.uniforms.showHeatmap) {
+      gl.uniform1f(this.uniforms.showHeatmap, this.showHeatmap !== false ? 1.0 : 0.0)
+    }
+
+    let svrMin = 0.0, svrMax = 100.0
+    if (this.activePatchIndex >= 0 && this.facesMeta && this.facesMeta[this.activePatchIndex]) {
+      const meta = this.facesMeta[this.activePatchIndex]
+      svrMin = meta.minSvr || 0.0
+      svrMax = meta.maxSvr || 100.0
+    } else {
+      svrMin = isFinite(this.globalMinSvr) ? this.globalMinSvr : 0.0
+      svrMax = isFinite(this.globalMaxSvr) ? this.globalMaxSvr : 100.0
+    }
+    if (this.uniforms.svrMin) gl.uniform1f(this.uniforms.svrMin, svrMin)
+    if (this.uniforms.svrMax) gl.uniform1f(this.uniforms.svrMax, svrMax)
+    if (this.uniforms.colormapType) {
+      gl.uniform1f(this.uniforms.colormapType, this.colormapType !== undefined ? this.colormapType : 1.0)
+    }
 
     // Bind Buffers
     gl.bindBuffer(gl.ARRAY_BUFFER, this.posBuffer)
@@ -781,6 +928,12 @@ class PointCloudViewer {
     gl.bindBuffer(gl.ARRAY_BUFFER, this.patchBuffer)
     gl.enableVertexAttribArray(this.attribs.patchIndex)
     gl.vertexAttribPointer(this.attribs.patchIndex, 1, gl.FLOAT, false, 0, 0)
+
+    if (this.attribs.svr >= 0 && this.svrBuffer) {
+      gl.bindBuffer(gl.ARRAY_BUFFER, this.svrBuffer)
+      gl.enableVertexAttribArray(this.attribs.svr)
+      gl.vertexAttribPointer(this.attribs.svr, 1, gl.FLOAT, false, 0, 0)
+    }
 
     // Fast Single GPU Draw Call for ALL raw points!
     gl.drawArrays(gl.POINTS, 0, this.totalPoints)
@@ -835,6 +988,12 @@ class PointCloudViewer {
       -(z0 * eye[0] + z1 * eye[1] + z2 * eye[2]),
       1
     ])
+  }
+
+  setPalette (paletteName) {
+    this.paletteName = paletteName || 'Jet'
+    this.colormapType = (this.paletteName.toLowerCase() === 'viridis') ? 0.0 : 1.0
+    this.render()
   }
 
   multiply (a, b) {
