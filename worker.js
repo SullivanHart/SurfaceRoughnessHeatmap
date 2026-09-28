@@ -21,50 +21,59 @@ function initPyodide () {
       })
 
       postMessage({ type: 'status', text: 'Loading numerical packages...' })
-      await pyodide.loadPackage(['numpy', 'scipy', 'micropip'])
+      await pyodide.loadPackage(['numpy', 'scipy'])
 
       postMessage({
         type: 'status',
         text: 'Loading svr-roughness metrology engine...'
       })
-      const micropip = pyodide.pyimport('micropip')
-      let installed = false
-      let localWheelName = null
-      let localWheelBuildError = null
-      try {
-        const wheelResponse = await fetch(new URL('api/wheel', self.location.href), { cache: 'no-store' })
-        if (wheelResponse.status === 503) {
-          const failure = await wheelResponse.json()
-          localWheelBuildError = failure.error || 'Local wheel build failed'
-        } else if (wheelResponse.ok) {
-          const localWheel = await wheelResponse.json()
-          localWheelName = localWheel.wheel_name || null
+
+      const isLocal = ['localhost', '127.0.0.1', '0.0.0.0'].includes(self.location.hostname) ||
+                      self.location.hostname.startsWith('192.168.') ||
+                      self.location.hostname.startsWith('10.') ||
+                      self.location.hostname.endsWith('.local')
+
+      if (isLocal) {
+        postMessage({
+          type: 'status',
+          text: 'Loading live svr-roughness from directory next to it...'
+        })
+        const localPkgUrl = new URL('api/local-package.zip?v=' + Date.now(), self.location.href).href
+        const resp = await fetch(localPkgUrl, { cache: 'no-store' })
+        if (!resp.ok) {
+          throw new Error(`Failed to load local svr-roughness from directory next to it: HTTP ${resp.status} ${resp.statusText}`)
         }
-      } catch (err) {
-        // Static deployments have no local wheel-building endpoint.
-      }
-      if (localWheelBuildError) throw new Error(localWheelBuildError)
-
-      const candidateWheels = localWheelName
-        ? [localWheelName]
-        : [
-            'svr_roughness-latest-py3-none-any.whl',
-            'svr_roughness-0.7.4-py3-none-any.whl',
-            'svr_roughness-0.7.3-py3-none-any.whl',
-            'svr_roughness-0.7.2-py3-none-any.whl',
-            'svr_roughness-0.7.1-py3-none-any.whl'
-          ]
-
-      for (const whlName of candidateWheels) {
-        try {
-          const fetchUrl = new URL(whlName + '?v=' + Date.now(), self.location.href).href
-          const whlResp = await fetch(fetchUrl, { cache: 'no-store' })
-          if (whlResp.ok) {
-            const buf = await whlResp.arrayBuffer()
-            const vfsPath = '/home/pyodide/engine.whl'
-            pyodide.FS.writeFile(vfsPath, new Uint8Array(buf))
-            pyodide.globals.set('_local_whl_path', vfsPath)
-            pyodide.runPython(`
+        const buf = await resp.arrayBuffer()
+        const vfsPath = '/home/pyodide/svr_roughness_local.zip'
+        pyodide.FS.writeFile(vfsPath, new Uint8Array(buf))
+        pyodide.globals.set('_local_pkg_path', vfsPath)
+        pyodide.runPython(`
+import sys
+import zipfile
+target_dir = next((p for p in sys.path if "site-packages" in p), None)
+if not target_dir:
+    target_dir = "/lib/python3.12/site-packages"
+with zipfile.ZipFile(_local_pkg_path) as zf:
+    zf.extractall(target_dir)
+if target_dir not in sys.path:
+    sys.path.insert(0, target_dir)
+`)
+        console.log('[Worker] Loaded live svr-roughness from directory next to it')
+      } else {
+        postMessage({
+          type: 'status',
+          text: 'Loading bundled svr-roughness wheel...'
+        })
+        const whlUrl = new URL('svr_roughness-latest-py3-none-any.whl', self.location.href).href
+        const resp = await fetch(whlUrl, { cache: 'no-store' })
+        if (!resp.ok) {
+          throw new Error(`Failed to load bundled wheel (${whlUrl}): HTTP ${resp.status} ${resp.statusText}`)
+        }
+        const buf = await resp.arrayBuffer()
+        const vfsPath = '/home/pyodide/engine.whl'
+        pyodide.FS.writeFile(vfsPath, new Uint8Array(buf))
+        pyodide.globals.set('_local_whl_path', vfsPath)
+        pyodide.runPython(`
 import sys
 import zipfile
 target_dir = next((p for p in sys.path if "site-packages" in p), None)
@@ -75,20 +84,7 @@ with zipfile.ZipFile(_local_whl_path) as zf:
 if target_dir not in sys.path:
     sys.path.insert(0, target_dir)
 `)
-            installed = true
-            console.log('Unpacked and installed bundled wheel:', whlName)
-            break
-          }
-        } catch (err) {
-          console.warn('Failed extracting bundled wheel ' + whlName + ':', err)
-        }
-      }
-
-      if (!installed) {
-        console.warn('Bundled wheel not found; fetching svr-roughness from PyPI...')
-        postMessage({ type: 'status', text: 'Fetching svr-roughness from PyPI...' })
-        const micropip = pyodide.pyimport('micropip')
-        await micropip.install('svr-roughness')
+        console.log('[Worker] Loaded bundled wheel from site build: svr_roughness-latest-py3-none-any.whl')
       }
 
     // Setup Python analysis helper
@@ -459,7 +455,7 @@ def run_analysis_payload(file_path_str, file_name, grid_mm, short_cutoff_mm, lon
 `)
 
     pyodideReady = true
-    postMessage({ type: 'ready' })
+    postMessage({ type: 'ready', mode: isLocal ? 'local' : 'bundled' })
     return pyodide
   } catch (err) {
     pyodideInitPromise = null

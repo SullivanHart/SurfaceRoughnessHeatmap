@@ -34,7 +34,6 @@ const themeIconSun = document.getElementById('theme-icon-sun')
 
 // 3D Planar Faces Elements & State
 let activePatchIndex = 0
-let isLocalBackend = false
 let currentViewMode = '3d-surface' // '2d' | '3d-surface' | '3d-object'
 let previousViewMode = null
 let pointCloudMarkerSize = 0.5
@@ -70,37 +69,6 @@ const secVal4 = document.getElementById('sec-val-4')
 const secLabel5 = document.getElementById('sec-label-5')
 const secVal5 = document.getElementById('sec-val-5')
 
-async function checkLocalBackend () {
-  const urlParams = new URLSearchParams(window.location.search)
-  if (urlParams.get('runtime') === 'worker' || urlParams.get('runtime') === 'pyodide') {
-    isLocalBackend = false
-    console.log('[Dashboard] Forcing client-side WebWorker (Pyodide) mode via query param')
-    return false
-  }
-
-  if (
-    window.location.hostname === 'localhost' ||
-    window.location.hostname === '127.0.0.1' ||
-    window.location.hostname === '0.0.0.0'
-  ) {
-    try {
-      const r = await fetch('/api/health')
-      if (r.ok) {
-        const info = await r.json()
-        if (info && info.status === 'ok') {
-          isLocalBackend = true
-          if (statusDot) statusDot.className = 'status-dot ready'
-          if (statusText) {
-            statusText.textContent = `Local Engine active (${info.mode})`
-          }
-          return true
-        }
-      }
-    } catch (e) {}
-  }
-  isLocalBackend = false
-  return false
-}
 
 function getTheme () {
   return document.documentElement.getAttribute('data-theme') || 'dark'
@@ -252,10 +220,11 @@ let currentAnalysisId = 0
 let workerRuntimeReady = false
 
 function initWorker () {
-  worker = new Worker('worker.js?t=' + Date.now())
+  const workerUrl = 'worker.js' + (window.location.search ? window.location.search + '&t=' : '?t=') + Date.now()
+  worker = new Worker(workerUrl)
 
   worker.onmessage = function (e) {
-    const { type, text, percent, data, error, analysisId } = e.data
+    const { type, text, percent, data, error, analysisId, mode } = e.data
 
     if (type === 'status') {
       if (statusText) statusText.textContent = text
@@ -264,11 +233,15 @@ function initWorker () {
       }
     } else if (type === 'ready') {
       workerRuntimeReady = true
-      if (isLocalBackend || currentResult) return
+      if (currentResult) return
       if (statusDot && statusDot.className !== 'status-dot analyzing') {
         statusDot.className = 'status-dot ready'
       }
-      if (statusText && !selectedFile) statusText.textContent = 'Browser Runtime Ready'
+      if (statusText && !selectedFile) {
+        statusText.textContent = mode === 'local'
+          ? 'Local Engine Ready (Live svr-roughness)'
+          : 'Browser Runtime Ready'
+      }
       if (selectedFile && !currentResult && !isAnalyzing) {
         startAnalysis(selectedFile)
       }
@@ -356,78 +329,6 @@ async function startAnalysis (file) {
 
   const arrayBuffer = await file.arrayBuffer()
 
-  // First verify if local backend is running
-  await checkLocalBackend()
-
-  if (isLocalBackend) {
-    let statusTimer = null
-    try {
-      setProgress(30, 'Parsing 3D scan coordinates...')
-      statusTimer = setInterval(() => {
-        if (currentPercent >= 35 && currentPercent < 60) {
-          if (statusText) statusText.textContent = 'Segmenting 3D geometry into surface faces...'
-        } else if (currentPercent >= 60 && currentPercent < 80) {
-          if (statusText) statusText.textContent = 'Calculating areal roughness (S_VR, S_a, S_q)...'
-        } else if (currentPercent >= 80 && currentPercent < 95) {
-          if (statusText) statusText.textContent = 'Rasterizing height topography & variogram...'
-        }
-      }, 400)
-
-      const query = new URLSearchParams({
-        filename: file.name,
-        grid_mm: gridPitchInput.value || '0.2',
-        short_cutoff: shortCutoffInput.value || '1.0',
-        long_cutoff: longCutoffInput.value || '25.0',
-        gaussian: gaussianCheckbox.checked ? '1' : '0'
-      })
-      const resp = await fetch(`/api/analyze?${query.toString()}`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/octet-stream',
-          'X-Filename': file.name
-        },
-        body: arrayBuffer
-      })
-      clearInterval(statusTimer)
-      statusTimer = null
-
-      if (thisAnalysisId !== currentAnalysisId) {
-        return
-      }
-
-      if (resp.ok) {
-        const data = await resp.json()
-        if (!data.error) {
-          isAnalyzing = false
-          if (statusDot) statusDot.className = 'status-dot ready'
-          completeProgress('Ready')
-          currentResult = data
-          renderResults(data)
-          return
-        } else {
-          throw new Error(data.error)
-        }
-      } else {
-        const errText = await resp.text()
-        throw new Error(`Server returned HTTP ${resp.status}: ${errText || resp.statusText}`)
-      }
-    } catch (e) {
-      if (statusTimer) clearInterval(statusTimer)
-      isAnalyzing = false
-      console.error('Local Python analysis error:', e)
-      if (statusDot) statusDot.className = 'status-dot ready'
-      resetProgress()
-      if (resultsContainer) {
-        resultsContainer.style.opacity = '1'
-        resultsContainer.style.pointerEvents = 'auto'
-      }
-      if (statusText) statusText.textContent = `Local Engine Error: ${e.message}`
-      alert(`Local Python Engine Error:\n${e.message}\n\nPlease check server console.`)
-      return
-    }
-  }
-
-  // Deployed production environment: uses browser WebWorker
   if (!workerRuntimeReady) {
     setProgress(22, 'Initializing Python runtime & numerical packages...')
   } else {
@@ -2013,7 +1914,6 @@ document.querySelectorAll('[data-sample]').forEach(btn => {
 // Initialize on page load
 initTheme()
 initWorker()
-checkLocalBackend()
 if (sampleSelectElem) {
   sampleSelectElem.selectedIndex = 0
   sampleSelectElem.value = ''
