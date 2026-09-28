@@ -132,7 +132,7 @@ def decompress_if_needed(raw_bytes, file_name):
 
 def run_analysis_payload(file_path_str, file_name, grid_mm, short_cutoff_mm, long_cutoff_mm, gaussian_mesh):
     t0 = time.perf_counter()
-    report(30, "Reading scan data...")
+    report(8, "Reading scan data...")
     path = Path(file_path_str)
 
     with path.open("rb") as f:
@@ -151,7 +151,7 @@ def run_analysis_payload(file_path_str, file_name, grid_mm, short_cutoff_mm, lon
         eff_name = file_name
 
     t_decomp = time.perf_counter()
-    report(34, "Parsing 3D coordinates...")
+    report(12, f"Parsing 3D coordinates ({eff_name})...")
     try:
         pts = load_points(scan_path)
     finally:
@@ -188,7 +188,7 @@ def run_analysis_payload(file_path_str, file_name, grid_mm, short_cutoff_mm, lon
     is_planar = is_planar_surface(pts) if HAS_DECOMPOSITION else True
 
     if is_planar:
-        report(36, f"Analyzing {len(pts):,} points...")
+        report(18, f"Calculating surface roughness ({len(pts):,} pts)...")
         res = analyze_pure_python(
             pts,
             voxel_size_mm=grid_mm,
@@ -199,7 +199,7 @@ def run_analysis_payload(file_path_str, file_name, grid_mm, short_cutoff_mm, lon
         )
         t_analyze = time.perf_counter()
 
-        report(92, "Aligning surface plane...")
+        report(70, "Aligning surface plane...")
         centroid = pts.mean(axis=0)
         centered = pts - centroid
         cov = (centered.T @ centered) / max(len(pts) - 1, 1)
@@ -216,9 +216,10 @@ def run_analysis_payload(file_path_str, file_name, grid_mm, short_cutoff_mm, lon
         coords = np.column_stack((centered @ x_ax, centered @ y_ax, centered @ normal))
         plane = PlaneFit(centroid=centroid, normal=normal, x_axis=x_ax, y_axis=y_ax, coords=coords)
 
+        report(82, "Rasterizing height topography...")
         grid_svr_um = compute_heatmap_grid(res.grid_z_mm, grid_mm, radius_mm=5.0)
 
-        report(95, "Formatting report...")
+        report(92, "Formatting surface metrics and report...")
         full_res = RoughnessResult(
             svr_um=res.svr_um,
             sa_um=res.sa_um,
@@ -298,18 +299,20 @@ def run_analysis_payload(file_path_str, file_name, grid_mm, short_cutoff_mm, lon
             }
         }
     else:
-        report(36, f"3D object scan detected ({len(pts):,} pts): Segmenting faces...")
+        report(15, f"3D scan detected ({len(pts):,} pts): Segmenting faces...")
         decomp_cfg = DecompositionConfig()
         def on_decomp_progress(stage_name, fraction):
-            pct = int(36 + fraction * 58)
-            report(pct, f"3D scan ({len(pts):,} pts): {stage_name}...")
+            pct = int(15 + fraction * 65)
+            report(pct, f"3D scan: {stage_name}...")
 
         obj_res = decompose_3d_object(pts, config=conf, decomp_config=decomp_cfg, progress=on_decomp_progress)
         t_analyze = time.perf_counter()
-        report(95, "Formatting surface metrics and topography...")
 
+        num_patches = len(obj_res.patches)
         patches_data = []
-        for p in obj_res.patches:
+        for i, p in enumerate(obj_res.patches):
+            pct = int(80 + 16 * (i / max(1, num_patches)))
+            report(pct, f"Rasterizing topography for {p.name} ({i+1}/{num_patches})...")
             r = p.roughness
             hmap = compute_heatmap_grid(r.grid, grid_mm, radius_mm=5.0) if r.grid is not None else None
             grid_svr_patch = np.where(np.isnan(hmap), None, np.round(hmap, 3)).tolist() if hmap is not None else []
@@ -451,6 +454,7 @@ def run_analysis_payload(file_path_str, file_name, grid_mm, short_cutoff_mm, lon
                 "total_ms": (t_analyze - t0) * 1000.0,
             }
         }
+    report(97, "Finalizing report...")
     return json.dumps(out)
 `)
 

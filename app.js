@@ -155,23 +155,23 @@ function setProgress (percent, text) {
     completeTimeout = null
   }
   if (progressBar) progressBar.style.display = 'block'
-  targetPercent = Math.max(targetPercent, percent)
+  targetPercent = Math.min(100, Math.max(targetPercent, percent))
   if (statusText && text) statusText.textContent = text
 
   if (!progressInterval) {
     progressInterval = setInterval(() => {
       if (currentPercent < targetPercent) {
-        const step = Math.max(0.4, (targetPercent - currentPercent) * 0.15)
+        const diff = targetPercent - currentPercent
+        const step = Math.max(0.3, diff * 0.15)
         currentPercent = Math.min(targetPercent, currentPercent + step)
-      } else if (currentPercent < 95) {
-        // Continuous organic progress that never stalls during backend/worker processing
-        const remaining = 95 - currentPercent
-        currentPercent += Math.max(0.04, remaining * 0.012)
+        if (progressFill) {
+          progressFill.style.width = currentPercent.toFixed(1) + '%'
+        }
+      } else if (currentPercent >= targetPercent) {
+        clearInterval(progressInterval)
+        progressInterval = null
       }
-      if (progressFill) {
-        progressFill.style.width = currentPercent.toFixed(1) + '%'
-      }
-    }, 35)
+    }, 25)
   }
 }
 
@@ -306,16 +306,8 @@ function handleFileSelect (file) {
     resultsContainer.style.pointerEvents = 'none'
   }
 
-  // Immediately launch progress bar at 10%
-  if (completeTimeout) {
-    clearTimeout(completeTimeout)
-    completeTimeout = null
-  }
-  currentPercent = 10
-  targetPercent = 15
-  if (progressBar) progressBar.style.display = 'block'
-  if (progressFill) progressFill.style.width = '10%'
-  setProgress(15, `Loading ${file.name}...`)
+  resetProgress()
+  setProgress(2, `Loading ${file.name}...`)
 
   startAnalysis(file)
 }
@@ -325,14 +317,14 @@ async function startAnalysis (file) {
   const thisAnalysisId = ++currentAnalysisId
   analysisStartTime = performance.now()
   if (statusDot) statusDot.className = 'status-dot analyzing'
-  setProgress(18, `Loading ${file.name}...`)
+  setProgress(4, `Reading ${file.name}...`)
 
   const arrayBuffer = await file.arrayBuffer()
 
   if (!workerRuntimeReady) {
-    setProgress(22, 'Initializing Python runtime & numerical packages...')
+    setProgress(6, 'Initializing Python runtime & numerical packages...')
   } else {
-    setProgress(28, 'Transferring scan data to metrology engine...')
+    setProgress(6, 'Transferring scan data to metrology engine...')
   }
   worker.postMessage(
     {
