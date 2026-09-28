@@ -172,6 +172,11 @@
           <!-- Main Viewport (3) : Metrics (1) Grid -->
           <div class="dashboard-grid">
             <div class="chart-card">
+              <!-- View Mode Toggle (Topography Heatmap vs 3D Point Cloud) -->
+              <div class="view-toggle-bar" id="view-toggle-bar" style="display: none;">
+                <button type="button" class="view-toggle-btn active" id="btn-view-topo">Topography</button>
+                <button type="button" class="view-toggle-btn" id="btn-view-3d">3D Point Cloud</button>
+              </div>
               <div id="chart-loading-overlay" class="chart-loading-overlay" style="display: none;">
                 <div class="spinner"></div>
                 <div class="loading-label" id="chart-loading-text">Rendering Face Topography...</div>

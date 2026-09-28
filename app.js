@@ -711,6 +711,7 @@ function selectFace (index) {
 function renderSingleSurface (res) {
   const unit = unitSelect ? unitSelect.value : 'µm'
   activePatchIndex = 0
+  currentViewMode = '3d-surface'
 
   if (partNavBar) partNavBar.style.display = 'none'
 
@@ -806,9 +807,9 @@ function updateActiveChart () {
   const btnViewTopo = document.getElementById('btn-view-topo')
   const btnView3d = document.getElementById('btn-view-3d')
 
-  // Toggle view-bar buttons when inspecting a face
+  // Toggle view-bar buttons when inspecting a face or single surface
   if (viewToggleBar) {
-    if (currentResult.is_3d && activePatchIndex >= 0) {
+    if (!currentResult.is_3d || activePatchIndex >= 0) {
       viewToggleBar.style.display = 'inline-flex'
       if (btnViewTopo) btnViewTopo.classList.toggle('active', currentViewMode === '3d-surface')
       if (btnView3d) btnView3d.classList.toggle('active', currentViewMode === '3d-object')
@@ -823,11 +824,13 @@ function updateActiveChart () {
     if (pcCanvas) pcCanvas.style.display = 'block'
     render3DObject(currentResult)
     if (pointCloudViewer) {
-      if (activePatchIndex >= 0) {
+      if (currentResult.is_3d && activePatchIndex >= 0) {
         pointCloudViewer.setActivePatch(activePatchIndex)
         pointCloudViewer.alignToFace(activePatchIndex)
-      } else {
+      } else if (currentResult.is_3d) {
         pointCloudViewer.setActivePatch(-1)
+      } else {
+        pointCloudViewer.setActivePatch(0)
       }
       pointCloudViewer.resize()
     }
@@ -1003,6 +1006,8 @@ function renderShapeMiniPreview () {
   ctx.restore()
 }
 
+let currentExtractedStride = 1
+
 function getOrExtractSurfaceData (target, unit, robust) {
   if (!target) return null
   const svrGrid = (target.grid_svr && Array.isArray(target.grid_svr) && target.grid_svr.length > 0)
@@ -1013,6 +1018,7 @@ function getOrExtractSurfaceData (target, unit, robust) {
 
   let cached = target._extractedSurface
   if (cached && cached.unit === unit && cached.robust === robust) {
+    currentExtractedStride = cached.stride || 1
     return cached
   }
 
@@ -1032,6 +1038,12 @@ function getOrExtractSurfaceData (target, unit, robust) {
   const svrMultiplier = (unit === 'mm') ? 0.001 : (unit === 'in' ? (1.0 / 25400.0) : 1.0)
   const zMultiplier = 0.001 // µm to mm
 
+  // Adaptive stride for safe, high-performance Plotly scatter3d (caps at ~50,000 points to prevent WebGL crashes)
+  const MAX_PLOT_PTS = 50000
+  const totalCells = numRows * numCols
+  const stride = Math.max(1, Math.ceil(Math.sqrt(totalCells / MAX_PLOT_PTS)))
+  currentExtractedStride = stride
+
   const validX = []
   const validY = []
   const validZ = []
@@ -1041,12 +1053,13 @@ function getOrExtractSurfaceData (target, unit, robust) {
   const invalidZ = []
 
   let minVal = Infinity, maxVal = -Infinity
-  let flatValues = robust ? [] : null
+  let flatValues = []
 
   for (let r = 0; r < numRows; r++) {
     const sRow = svrGrid[r]
     const zRow = zGrid[r]
     const yVal = originY + r * pitch
+    const isSampleRow = (r % stride === 0)
 
     for (let c = 0; c < numCols; c++) {
       const zRaw = zRow ? zRow[c] : null
@@ -1059,15 +1072,17 @@ function getOrExtractSurfaceData (target, unit, robust) {
       if (hasZ && hasS) {
         const zMm = zRaw * zMultiplier
         const sConverted = sRaw * svrMultiplier
-        validX.push(xVal)
-        validY.push(yVal)
-        validZ.push(zMm)
-        validIntensity.push(sConverted)
 
         if (sConverted < minVal) minVal = sConverted
         if (sConverted > maxVal) maxVal = sConverted
-        if (flatValues) flatValues.push(sConverted)
-      } else if (hasZ) {
+        if (isSampleRow && (c % stride === 0)) {
+          validX.push(xVal)
+          validY.push(yVal)
+          validZ.push(zMm)
+          validIntensity.push(sConverted)
+          flatValues.push(sConverted)
+        }
+      } else if (hasZ && isSampleRow && (c % stride === 0)) {
         invalidX.push(xVal)
         invalidY.push(yVal)
         invalidZ.push(zRaw * zMultiplier)
@@ -1076,24 +1091,29 @@ function getOrExtractSurfaceData (target, unit, robust) {
   }
 
   if (target.invalid_points_local && Array.isArray(target.invalid_points_local)) {
-    target.invalid_points_local.forEach(pt => {
+    const invStride = Math.max(1, Math.ceil(target.invalid_points_local.length / 5000))
+    for (let i = 0; i < target.invalid_points_local.length; i += invStride) {
+      const pt = target.invalid_points_local[i]
       if (Array.isArray(pt) && pt.length >= 3) {
         invalidX.push(pt[0])
         invalidY.push(pt[1])
         invalidZ.push(pt[2])
       }
-    })
+    }
   }
 
   let cmin = isFinite(minVal) ? minVal : 0
   let cmax = isFinite(maxVal) ? maxVal : 1
   if (robust && flatValues && flatValues.length > 20) {
     flatValues.sort((a, b) => a - b)
-    cmin = flatValues[Math.floor(flatValues.length * 0.01)]
-    cmax = flatValues[Math.floor(flatValues.length * 0.99)]
+    cmin = flatValues[Math.floor(flatValues.length * 0.02)]
+    cmax = flatValues[Math.floor(flatValues.length * 0.98)]
+  }
+  if (cmax <= cmin) {
+    cmax = cmin + 1.0
   }
 
-  const res = { validX, validY, validZ, validIntensity, invalidX, invalidY, invalidZ, cmin, cmax, unit, robust, numRows, numCols, pitch }
+  const res = { validX, validY, validZ, validIntensity, invalidX, invalidY, invalidZ, cmin, cmax, unit, robust, numRows, numCols, pitch, stride }
   target._extractedSurface = res
   return res
 }
@@ -1111,7 +1131,7 @@ function render3DSurface (target) {
     return
   }
 
-  const { validX, validY, validZ, validIntensity, invalidX, invalidY, invalidZ, cmin, cmax, numRows, numCols, pitch } = extracted
+  const { validX, validY, validZ, validIntensity, invalidX, invalidY, invalidZ, cmin, cmax, numRows, numCols, pitch, stride } = extracted
 
   const isDark = getTheme() === 'dark'
   const chartBg = isDark ? '#1c1d22' : '#ffffff'
@@ -1122,6 +1142,10 @@ function render3DSurface (target) {
   const showHeatmap = showHeatmapCheckbox ? showHeatmapCheckbox.checked : true
   const faceColor = FACE_PALETTE[activePatchIndex >= 0 ? (activePatchIndex % FACE_PALETTE.length) : 0] || '#2563eb'
 
+  const markerScale = stride > 1
+    ? Math.max(1.5, pointCloudMarkerSize * 3.2)
+    : Math.max(1.0, pointCloudMarkerSize * 2.0)
+
   const trace = {
     type: 'scatter3d',
     mode: 'markers',
@@ -1131,7 +1155,7 @@ function render3DSurface (target) {
     y: validY,
     z: validZ,
     marker: showHeatmap ? {
-      size: pointCloudMarkerSize,
+      size: markerScale,
       color: validIntensity,
       colorscale: palette,
       cmin: cmin,
@@ -1152,13 +1176,13 @@ function render3DSurface (target) {
       },
       opacity: 1.0
     } : {
-      size: pointCloudMarkerSize,
+      size: markerScale,
       color: faceColor,
       showscale: false,
       opacity: 1.0
     },
     hovertemplate: showHeatmap
-      ? `Surface X: %{x:.2f} mm<br>Surface Y: %{y:.2f} mm<br>Elevation Z: %{z:.3f} mm<br>Local S_VR: %{marker.color:.4f} ${unit}<extra></extra>`
+      ? `Surface X: %{x:.2f} mm<br>Surface Y: %{y:.2f} mm<br>Elevation Z: %{z:.3f} mm<br>Local S_VR: %{marker.color:.2f} ${unit}<extra></extra>`
       : `${target.name || 'Face'}<br>Surface X: %{x:.2f} mm<br>Surface Y: %{y:.2f} mm<br>Elevation Z: %{z:.3f} mm<extra></extra>`
   }
 
@@ -1724,7 +1748,10 @@ function updatePlotlyPointSize (sz) {
     const chartContainerElem = document.getElementById('chart-container')
     if (chartContainerElem && chartContainerElem.data && chartContainerElem.data.length > 0) {
       const traceIndices = chartContainerElem.data.length > 1 ? [0, 1] : [0]
-      Plotly.restyle('chart-container', { 'marker.size': targetSz }, traceIndices)
+      const actualSz = currentExtractedStride > 1
+        ? Math.max(1.5, targetSz * 3.2)
+        : Math.max(1.0, targetSz * 2.0)
+      Plotly.restyle('chart-container', { 'marker.size': actualSz }, traceIndices)
         .catch(() => {})
         .finally(() => {
           plotlyRestyleInProgress = false
@@ -1766,6 +1793,28 @@ function setDiscretePointSize (idx, force = false) {
   if (currentViewMode === '3d-surface') {
     updatePlotlyPointSize(sz)
   }
+}
+
+// View toggle buttons (Topography vs 3D Point Cloud)
+const btnViewTopoElem = document.getElementById('btn-view-topo')
+const btnView3dElem = document.getElementById('btn-view-3d')
+
+if (btnViewTopoElem) {
+  btnViewTopoElem.addEventListener('click', () => {
+    if (currentViewMode !== '3d-surface') {
+      currentViewMode = '3d-surface'
+      updateActiveChart()
+    }
+  })
+}
+
+if (btnView3dElem) {
+  btnView3dElem.addEventListener('click', () => {
+    if (currentViewMode !== '3d-object') {
+      currentViewMode = '3d-object'
+      updateActiveChart()
+    }
+  })
 }
 
 if (pointSizeSlider) {

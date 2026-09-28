@@ -384,11 +384,37 @@ class PointCloudViewer {
         const ptCount = f32.length / 3
         const colors = new Float32Array(ptCount * 3)
         const patches = new Float32Array(ptCount)
-        const svrs = new Float32Array(ptCount).fill(result.svr_um || 10.0)
+        let svrs = null
+        let minS = Infinity, maxS = -Infinity
+
+        if (result.sample_svr_b64) {
+          svrs = this.decodeBase64Float32(result.sample_svr_b64)
+          for (let i = 0; i < svrs.length; i++) {
+            if (svrs[i] > 0) {
+              if (svrs[i] < minS) minS = svrs[i]
+              if (svrs[i] > maxS) maxS = svrs[i]
+            }
+          }
+        }
+        if (!svrs || svrs.length !== ptCount) {
+          svrs = new Float32Array(ptCount).fill(result.svr_um || 10.0)
+        }
+
+        if (typeof result.min_svr_um === 'number' && typeof result.max_svr_um === 'number' && result.max_svr_um > result.min_svr_um) {
+          minS = result.min_svr_um
+          maxS = result.max_svr_um
+        } else if (!isFinite(minS) || !isFinite(maxS) || maxS <= minS) {
+          minS = result.svr_um ? result.svr_um * 0.5 : 10.0
+          maxS = result.svr_um ? result.svr_um * 1.5 : 100.0
+        }
+
+        this.globalMinSvr = minS
+        this.globalMaxSvr = maxS
+
         for (let i = 0; i < ptCount; i++) {
-          colors[i * 3] = 0.784
-          colors[i * 3 + 1] = 0.063
-          colors[i * 3 + 2] = 0.180
+          colors[i * 3] = 0.145
+          colors[i * 3 + 1] = 0.388
+          colors[i * 3 + 2] = 0.922
           patches[i] = 0
         }
         allPos.push(f32)
@@ -396,14 +422,17 @@ class PointCloudViewer {
         allPatch.push(patches)
         allSvr.push(svrs)
 
+        let centroid = result.plane_centroid || [0, 0, 0]
+        let normal = result.plane_normal || [0, 0, 1]
+
         this.facesMeta.push({
           patchId: 1,
           name: result.effective_name || 'Surface',
-          centroid: [0, 0, 0],
-          normal: [0, 0, 1],
+          centroid: centroid,
+          normal: normal,
           pointCount: ptCount,
-          minSvr: 10,
-          maxSvr: 100
+          minSvr: minS,
+          maxSvr: maxS
         })
       }
     }

@@ -200,21 +200,13 @@ def run_analysis_payload(file_path_str, file_name, grid_mm, short_cutoff_mm, lon
         t_analyze = time.perf_counter()
 
         report(70, "Aligning surface plane...")
-        centroid = pts.mean(axis=0)
-        centered = pts - centroid
-        cov = (centered.T @ centered) / max(len(pts) - 1, 1)
-        _, eigvecs = np.linalg.eigh(cov)
-        normal = eigvecs[:, 0]
-        if normal[2] < 0: normal = -normal
-        normal /= np.linalg.norm(normal)
-        gx = np.array([1.0, 0.0, 0.0])
-        x_ax = gx - normal * np.dot(gx, normal)
-        if np.linalg.norm(x_ax) < 1e-6:
-            x_ax = np.array([0.0, 1.0, 0.0]) - normal * normal[1]
-        x_ax /= np.linalg.norm(x_ax)
-        y_ax = np.cross(normal, x_ax)
-        coords = np.column_stack((centered @ x_ax, centered @ y_ax, centered @ normal))
-        plane = PlaneFit(centroid=centroid, normal=normal, x_axis=x_ax, y_axis=y_ax, coords=coords)
+        plane = PlaneFit(
+            centroid=res.plane_centroid_mm,
+            normal=res.plane_normal,
+            x_axis=res.plane_x_axis,
+            y_axis=res.plane_y_axis,
+            coords=None,
+        )
 
         report(82, "Rasterizing height topography...")
         grid_svr_um = compute_heatmap_grid(res.grid_z_mm, grid_mm, radius_mm=5.0)
@@ -240,23 +232,27 @@ def run_analysis_payload(file_path_str, file_name, grid_mm, short_cutoff_mm, lon
         report_str = format_report(full_res)
         grid_svr = np.where(np.isnan(grid_svr_um), None, np.round(grid_svr_um, 3)).tolist()
 
-        # Full raw points binary encoding (zero downsampling up to 600k points)
-        stride_pts = max(1, len(pts) // 600000)
+        valid_s = grid_svr_um[np.isfinite(grid_svr_um)]
+        min_s = float(np.percentile(valid_s, 1)) if len(valid_s) > 0 else float(res.svr_um * 0.5)
+        max_s = float(np.percentile(valid_s, 99)) if len(valid_s) > 0 else float(res.svr_um * 1.5)
+
+        # Planar 3D points binary encoding (capped to 250k points for smooth 60fps WebGL)
+        stride_pts = max(1, len(pts) // 250000)
         raw_f32 = np.ascontiguousarray(pts[::stride_pts], dtype=np.float32)
         sample_b64 = base64.b64encode(raw_f32.tobytes()).decode("ascii")
         stride_light = max(1, len(pts) // 4000)
         sample_pts = np.round(pts[::stride_light], 2).tolist()
 
         pt_svr_b64 = None
-        if grid_svr_um is not None and plane is not None and len(raw_f32) > 0:
-            diff = raw_f32 - plane.centroid
-            u = np.dot(diff, plane.x_axis)
-            v = np.dot(diff, plane.y_axis)
+        if grid_svr_um is not None and len(raw_f32) > 0:
+            diff = raw_f32 - res.plane_centroid_mm
+            u = np.dot(diff, res.plane_x_axis)
+            v = np.dot(diff, res.plane_y_axis)
             orig_x = float(res.grid_origin_mm[0]) if res.grid_origin_mm is not None else 0.0
             orig_y = float(res.grid_origin_mm[1]) if res.grid_origin_mm is not None else 0.0
             pt_svr = interpolate_heatmap_at_points(grid_svr_um, orig_x, orig_y, grid_mm, u, v)
             pt_svr = np.nan_to_num(pt_svr, nan=float(res.svr_um))
-            pt_svr_b64 = base64.b64encode(np.ascontiguousarray(pt_svr).tobytes()).decode("ascii")
+            pt_svr_b64 = base64.b64encode(np.ascontiguousarray(pt_svr, dtype=np.float32).tobytes()).decode("ascii")
 
         elev_g = res.elevation_grid_mm if hasattr(res, "elevation_grid_mm") and res.elevation_grid_mm is not None else res.grid_z_mm
         gz = elev_g * 1000.0 if elev_g is not None else None
@@ -268,6 +264,10 @@ def run_analysis_payload(file_path_str, file_name, grid_mm, short_cutoff_mm, lon
             "sa_um": res.sa_um,
             "sq_um": res.sq_um,
             "svr_um": res.svr_um,
+            "min_svr_um": min_s,
+            "max_svr_um": max_s,
+            "plane_centroid": res.plane_centroid_mm.tolist(),
+            "plane_normal": res.plane_normal.tolist(),
             "total_points": len(pts),
             "processed_points": res.processed_points,
             "patch_width_mm": res.grid_width * grid_mm,
