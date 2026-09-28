@@ -32,22 +32,29 @@ jobs:
       - name: Setup svr-roughness Wheel
         run: |
           mkdir -p tmp_wheel
-          # 1. Try building directly from source repository if available
-          if git clone --depth 1 https://github.com/SullivanHart/svr-roughness.git tmp_svr 2>/dev/null; then
-            echo "Building latest svr-roughness from source repository..."
-            pip install build
-            python -m build --wheel --outdir tmp_wheel/ tmp_svr/
+          # 1. Check if newer release (v0.7.4+) is available on PyPI
+          echo "Checking PyPI for latest svr-roughness (>=0.7.4)..."
+          pip download --no-deps "svr-roughness>=0.7.4" -d tmp_wheel/ 2>/dev/null || true
+
+          # 2. Try building directly from source repository if available
+          if [ -z "$(ls tmp_wheel/*.whl 2>/dev/null)" ]; then
+            if git clone --depth 1 https://github.com/SullivanHart/svr-roughness.git tmp_svr 2>/dev/null; then
+              echo "Building svr-roughness from source repository..."
+              pip install build
+              python -m build --wheel --outdir tmp_wheel/ tmp_svr/
+            fi
           fi
 
+          # 3. Use newly fetched/built wheel, or preserve repository bundled wheel
           WHL_FILE=$(ls tmp_wheel/*.whl 2>/dev/null | head -n 1)
           if [ -n "$WHL_FILE" ]; then
             rm -f svr_roughness-*.whl
             cp "$WHL_FILE" ./svr_roughness-latest-py3-none-any.whl
-            echo "Updated bundled wheel to freshly built: $WHL_FILE"
+            echo "Updated bundled wheel to: $WHL_FILE"
           elif [ -f "./svr_roughness-latest-py3-none-any.whl" ]; then
-            echo "Using repository bundled wheel: svr_roughness-latest-py3-none-any.whl"
+            echo "Using repository bundled optimized wheel: svr_roughness-latest-py3-none-any.whl"
           else
-            echo "Downloading from PyPI..."
+            echo "Downloading fallback from PyPI..."
             pip download --no-deps svr-roughness -d tmp_wheel/ || true
             WHL_FILE=$(ls tmp_wheel/*.whl 2>/dev/null | head -n 1)
             if [ -n "$WHL_FILE" ]; then
