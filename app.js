@@ -730,8 +730,9 @@ function selectFace (index) {
     pointCloudViewer.setActivePatch(index)
   }
 
-  // Render corner 3D shape thumbnail (now fast batch canvas)
+  // Render corner 3D shape thumbnail & Variogram FIRST so right KPI card expands to its full height
   renderShapeMiniPreview()
+  renderVariogram(patch)
 
   const kpiCardElem = document.getElementById('kpi-card')
   const chartCardElem = document.querySelector('.chart-card')
@@ -750,14 +751,14 @@ function selectFace (index) {
     chartContainer.style.display = 'block'
   }
   if (pcCanvas) pcCanvas.style.display = 'none'
+  if (loadingOverlay) loadingOverlay.style.display = 'flex'
 
-  // Render 3D topography surface immediately
-  updateActiveChart()
-  if (loadingOverlay) loadingOverlay.style.display = 'none'
-
-  // Render Variogram in next animation frame to keep face transition instant
+  // Yield to browser to paint active pill & loading spinner before heavy Plotly render
   requestAnimationFrame(() => {
-    renderVariogram(patch)
+    setTimeout(() => {
+      updateActiveChart()
+      if (loadingOverlay) loadingOverlay.style.display = 'none'
+    }, 10)
   })
 }
 
@@ -1365,7 +1366,9 @@ function render3DSurface (target) {
     })
   }
 
-  Plotly.react('chart-container', traces, layout, config)
+  Plotly.react('chart-container', traces, layout, config).then(() => {
+    Plotly.Plots.resize('chart-container')
+  })
 }
 
 function initPointCloudViewer () {
@@ -1989,14 +1992,14 @@ if (window.ResizeObserver) {
         const kpiH = kpiEl.offsetHeight
         if (kpiH > 200) {
           const targetH = Math.max(580, kpiH - 16)
-          if (Math.abs(chartCont.offsetHeight - targetH) > 12) {
+          if (Math.abs(chartCont.offsetHeight - targetH) > 6) {
             chartCont.style.height = `${targetH}px`
             clearTimeout(resizeTimer)
             resizeTimer = setTimeout(() => {
               if (window.Plotly && chartCont.data) {
-                Plotly.Plots.resize(chartCont)
+                Plotly.relayout(chartCont, { height: targetH })
               }
-            }, 100)
+            }, 30)
           }
         }
       }

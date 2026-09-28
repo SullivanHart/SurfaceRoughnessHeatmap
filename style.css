@@ -648,7 +648,9 @@ details.standards-panel[open] summary {
 }
 
 #chart-container .plot-container,
-#chart-container .svg-container {
+#chart-container .svg-container,
+#chart-container .gl-container,
+#chart-container .main-svg {
   height: 100% !important;
 }
 
