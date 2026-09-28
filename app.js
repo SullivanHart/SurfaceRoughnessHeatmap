@@ -988,12 +988,22 @@ function renderShapeMiniPreview () {
     return { x: screenX, y: screenY, depth: pzRot }
   }
 
+  const MAX_MINI_PTS = 300
+  function samplePts (arr) {
+    if (!arr || arr.length <= MAX_MINI_PTS) return arr || []
+    const step = Math.ceil(arr.length / MAX_MINI_PTS)
+    const out = []
+    for (let i = 0; i < arr.length; i += step) out.push(arr[i])
+    return out
+  }
+
   // Collect faces and depth sort
   const faceDrawOrder = []
 
   const showUnassigned = showUnassignedCheckbox ? showUnassignedCheckbox.checked : true
   if (showUnassigned && unassignedPts3d.length > 0) {
-    const projUnassigned = unassignedPts3d.map(projectPoint)
+    const sampledU = samplePts(unassignedPts3d)
+    const projUnassigned = sampledU.map(projectPoint)
     const avgDepthU = projUnassigned.reduce((acc, pt) => acc + pt.depth, 0) / projUnassigned.length
     faceDrawOrder.push({
       patch: null,
@@ -1005,7 +1015,7 @@ function renderShapeMiniPreview () {
   }
 
   currentResult.patches.forEach((p, idx) => {
-    const pts = p.sample_points_3d || []
+    const pts = samplePts(p.sample_points_3d)
     if (pts.length === 0) return
     const projPts = pts.map(projectPoint)
     const avgDepth = projPts.reduce((acc, pt) => acc + pt.depth, 0) / projPts.length
@@ -1035,11 +1045,13 @@ function renderShapeMiniPreview () {
       : (isDark ? 'rgba(100, 116, 139, 0.40)' : 'rgba(148, 163, 184, 0.50)')
 
     const radius = isAct ? 1.6 : 1.0
-    pts.forEach(p => {
-      ctx.beginPath()
+    ctx.beginPath()
+    for (let i = 0; i < pts.length; i++) {
+      const p = pts[i]
+      ctx.moveTo(p.x + radius, p.y)
       ctx.arc(p.x, p.y, radius, 0, Math.PI * 2)
-      ctx.fill()
-    })
+    }
+    ctx.fill()
   })
 
   ctx.restore()
@@ -1083,56 +1095,82 @@ function render3DSurface (target) {
   const svrMultiplier = (unit === 'mm') ? 0.001 : (unit === 'in' ? (1.0 / 25400.0) : 1.0)
   const zMultiplier = 0.001 // µm to mm
 
-  // Extract all valid raw discrete measurement points and invalid edge points in a single pass (no smoothing)
-  const validX = []
-  const validY = []
-  const validZ = []
-  const validIntensity = []
-  const invalidX = []
-  const invalidY = []
-  const invalidZ = []
+  // Extract or retrieve cached discrete measurement points
+  let cached = target._extractedSurface
+  let validX, validY, validZ, validIntensity, invalidX, invalidY, invalidZ, cmin, cmax
+  if (cached && cached.unit === unit && cached.robust === robust) {
+    validX = cached.validX
+    validY = cached.validY
+    validZ = cached.validZ
+    validIntensity = cached.validIntensity
+    invalidX = cached.invalidX
+    invalidY = cached.invalidY
+    invalidZ = cached.invalidZ
+    cmin = cached.cmin
+    cmax = cached.cmax
+  } else {
+    validX = []
+    validY = []
+    validZ = []
+    validIntensity = []
+    invalidX = []
+    invalidY = []
+    invalidZ = []
 
-  let minVal = Infinity, maxVal = -Infinity
-  let flatValues = robust ? [] : null
+    let minVal = Infinity, maxVal = -Infinity
+    let flatValues = robust ? [] : null
 
-  for (let r = 0; r < numRows; r++) {
-    const sRow = svrGrid[r]
-    const zRow = zGrid[r]
-    const yVal = originY + r * pitch
+    for (let r = 0; r < numRows; r++) {
+      const sRow = svrGrid[r]
+      const zRow = zGrid[r]
+      const yVal = originY + r * pitch
 
-    for (let c = 0; c < numCols; c++) {
-      const zRaw = zRow ? zRow[c] : null
-      const sRaw = sRow ? sRow[c] : null
-      const xVal = originX + c * pitch
+      for (let c = 0; c < numCols; c++) {
+        const zRaw = zRow ? zRow[c] : null
+        const sRaw = sRow ? sRow[c] : null
+        const xVal = originX + c * pitch
 
-      const hasZ = typeof zRaw === 'number' && !isNaN(zRaw)
-      const hasS = typeof sRaw === 'number' && !isNaN(sRaw)
+        const hasZ = typeof zRaw === 'number' && !isNaN(zRaw)
+        const hasS = typeof sRaw === 'number' && !isNaN(sRaw)
 
-      if (hasZ && hasS) {
-        const zMm = zRaw * zMultiplier
-        const sConverted = sRaw * svrMultiplier
-        validX.push(xVal)
-        validY.push(yVal)
-        validZ.push(zMm)
-        validIntensity.push(sConverted)
+        if (hasZ && hasS) {
+          const zMm = zRaw * zMultiplier
+          const sConverted = sRaw * svrMultiplier
+          validX.push(xVal)
+          validY.push(yVal)
+          validZ.push(zMm)
+          validIntensity.push(sConverted)
 
-        if (sConverted < minVal) minVal = sConverted
-        if (sConverted > maxVal) maxVal = sConverted
-        if (flatValues) flatValues.push(sConverted)
-      } else if (hasZ) {
-        invalidX.push(xVal)
-        invalidY.push(yVal)
-        invalidZ.push(zRaw * zMultiplier)
+          if (sConverted < minVal) minVal = sConverted
+          if (sConverted > maxVal) maxVal = sConverted
+          if (flatValues) flatValues.push(sConverted)
+        } else if (hasZ) {
+          invalidX.push(xVal)
+          invalidY.push(yVal)
+          invalidZ.push(zRaw * zMultiplier)
+        }
       }
     }
-  }
 
-  let cmin = isFinite(minVal) ? minVal : 0
-  let cmax = isFinite(maxVal) ? maxVal : 1
-  if (robust && flatValues && flatValues.length > 20) {
-    flatValues.sort((a, b) => a - b)
-    cmin = flatValues[Math.floor(flatValues.length * 0.01)]
-    cmax = flatValues[Math.floor(flatValues.length * 0.99)]
+    if (target.invalid_points_local && Array.isArray(target.invalid_points_local)) {
+      target.invalid_points_local.forEach(pt => {
+        if (Array.isArray(pt) && pt.length >= 3) {
+          invalidX.push(pt[0])
+          invalidY.push(pt[1])
+          invalidZ.push(pt[2])
+        }
+      })
+    }
+
+    cmin = isFinite(minVal) ? minVal : 0
+    cmax = isFinite(maxVal) ? maxVal : 1
+    if (robust && flatValues && flatValues.length > 20) {
+      flatValues.sort((a, b) => a - b)
+      cmin = flatValues[Math.floor(flatValues.length * 0.01)]
+      cmax = flatValues[Math.floor(flatValues.length * 0.99)]
+    }
+
+    target._extractedSurface = { validX, validY, validZ, validIntensity, invalidX, invalidY, invalidZ, cmin, cmax, unit, robust }
   }
 
   const showHeatmap = showHeatmapCheckbox ? showHeatmapCheckbox.checked : true
@@ -1180,16 +1218,6 @@ function render3DSurface (target) {
 
   // Collect invalid and peeled edge points belonging specifically to this face
   const showUnassigned = showUnassignedCheckbox ? showUnassignedCheckbox.checked : true
-
-  if (target.invalid_points_local && Array.isArray(target.invalid_points_local)) {
-    target.invalid_points_local.forEach(pt => {
-      if (Array.isArray(pt) && pt.length >= 3) {
-        invalidX.push(pt[0])
-        invalidY.push(pt[1])
-        invalidZ.push(pt[2])
-      }
-    })
-  }
 
   const xSpan = (numCols > 1 ? (numCols - 1) * pitch : 1)
   const ySpan = (numRows > 1 ? (numRows - 1) * pitch : 1)
@@ -1757,9 +1785,41 @@ robustCheckbox.addEventListener('change', () => {
 
 // Point size slider (.25 - .5 - 1.0)
 const POINT_SIZES = [0.25, 0.5, 1.0]
+let currentDiscreteIdx = 1
+let plotlyRestyleInProgress = false
+let pendingPlotlySize = null
 
-function setDiscretePointSize (idx) {
+function updatePlotlyPointSize (sz) {
+  pendingPlotlySize = sz
+  if (plotlyRestyleInProgress) return
+  plotlyRestyleInProgress = true
+
+  requestAnimationFrame(() => {
+    const targetSz = pendingPlotlySize
+    pendingPlotlySize = null
+    const chartContainerElem = document.getElementById('chart-container')
+    if (chartContainerElem && chartContainerElem.data && chartContainerElem.data.length > 0) {
+      Plotly.restyle('chart-container', { 'marker.size': targetSz })
+        .catch(() => {})
+        .finally(() => {
+          plotlyRestyleInProgress = false
+          if (pendingPlotlySize !== null && pendingPlotlySize !== targetSz) {
+            updatePlotlyPointSize(pendingPlotlySize)
+          }
+        })
+    } else {
+      plotlyRestyleInProgress = false
+    }
+  })
+}
+
+function setDiscretePointSize (idx, force = false) {
   const clampedIdx = Math.max(0, Math.min(2, idx))
+  if (!force && clampedIdx === currentDiscreteIdx && pointSizeSlider && parseInt(pointSizeSlider.value, 10) === clampedIdx) {
+    return
+  }
+  currentDiscreteIdx = clampedIdx
+
   if (pointSizeSlider && parseInt(pointSizeSlider.value, 10) !== clampedIdx) {
     pointSizeSlider.value = clampedIdx
   }
@@ -1772,28 +1832,19 @@ function setDiscretePointSize (idx) {
     s.classList.toggle('active', s.getAttribute('data-idx') === String(clampedIdx))
   })
 
-  // 1. Update WebGL PointCloudViewer on the cube
+  // 1. Instant synchronous render on WebGL PointCloudViewer (All view / Cube)
   if (pointCloudViewer) {
     pointCloudViewer.setPointSize(sz)
   }
 
-  // 2. Update Plotly 3D Surface Topography
+  // 2. Non-blocking, frame-throttled update on Plotly 3D Topography
   if (currentViewMode === '3d-surface') {
-    const chartContainerElem = document.getElementById('chart-container')
-    if (chartContainerElem && chartContainerElem.data && chartContainerElem.data.length > 0) {
-      try {
-        Plotly.restyle('chart-container', { 'marker.size': sz })
-      } catch (err) {}
-    }
+    updatePlotlyPointSize(sz)
   }
 }
 
 if (pointSizeSlider) {
   pointSizeSlider.addEventListener('input', () => {
-    const idx = parseInt(pointSizeSlider.value, 10)
-    setDiscretePointSize(idx)
-  })
-  pointSizeSlider.addEventListener('change', () => {
     const idx = parseInt(pointSizeSlider.value, 10)
     setDiscretePointSize(idx)
   })
@@ -1803,6 +1854,7 @@ if (pointSizeSlider) {
 const pointSizeWrapper = document.querySelector('.point-size-slider-wrapper')
 if (pointSizeWrapper) {
   pointSizeWrapper.addEventListener('click', e => {
+    if (e.target === pointSizeSlider) return
     const rect = pointSizeWrapper.getBoundingClientRect()
     const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width))
     const idx = Math.round(ratio * 2)
@@ -1963,14 +2015,14 @@ if (window.ResizeObserver) {
         const kpiH = kpiEl.offsetHeight
         if (kpiH > 200) {
           const targetH = Math.max(580, kpiH - 16)
-          if (Math.abs(chartCont.offsetHeight - targetH) > 6) {
+          if (Math.abs(chartCont.offsetHeight - targetH) > 12) {
             chartCont.style.height = `${targetH}px`
             clearTimeout(resizeTimer)
             resizeTimer = setTimeout(() => {
               if (window.Plotly && chartCont.data) {
-                Plotly.relayout(chartCont, { height: targetH })
+                Plotly.Plots.resize(chartCont)
               }
-            }, 30)
+            }, 100)
           }
         }
       }
