@@ -242,6 +242,7 @@ function resetProgress () {
 
 let isAnalyzing = false
 let currentAnalysisId = 0
+let workerRuntimeReady = false
 
 function initWorker () {
   worker = new Worker('worker.js?t=' + Date.now())
@@ -251,7 +252,11 @@ function initWorker () {
 
     if (type === 'status') {
       if (statusText) statusText.textContent = text
+      if (isAnalyzing && progressBar) {
+        setProgress(Math.max(currentPercent, 22), text)
+      }
     } else if (type === 'ready') {
+      workerRuntimeReady = true
       if (isLocalBackend || currentResult) return
       if (statusDot && statusDot.className !== 'status-dot analyzing') {
         statusDot.className = 'status-dot ready'
@@ -408,7 +413,11 @@ async function startAnalysis (file) {
   }
 
   // Deployed production environment: uses browser WebWorker
-  setProgress(28, 'Transferring scan data to browser runtime...')
+  if (!workerRuntimeReady) {
+    setProgress(22, 'Initializing Python runtime & numerical packages...')
+  } else {
+    setProgress(28, 'Transferring scan data to metrology engine...')
+  }
   worker.postMessage(
     {
       type: 'analyze',

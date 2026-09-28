@@ -46,32 +46,63 @@ function initPyodide () {
       if (localWheelBuildError) throw new Error(localWheelBuildError)
 
       if (localWheelName) {
-        const wheelUrl = new URL(localWheelName + '?v=' + Date.now(), self.location.href).href
-        await micropip.install(wheelUrl)
-        installed = true
-        console.log('Loaded local wheel:', localWheelName)
-      } else {
+        try {
+          const fetchUrl = new URL(localWheelName + '?v=' + Date.now(), self.location.href).href
+          const whlResp = await fetch(fetchUrl, { cache: 'no-store' })
+          if (whlResp.ok) {
+            const buf = await whlResp.arrayBuffer()
+            const vfsPath = '/home/pyodide/' + localWheelName
+            pyodide.FS.writeFile(vfsPath, new Uint8Array(buf))
+            pyodide.globals.set('_local_whl_path', vfsPath)
+            await pyodide.runPythonAsync(`
+import micropip
+await micropip.install("emfs:" + _local_whl_path, deps=False)
+`)
+            installed = true
+            console.log('Loaded local wheel:', localWheelName)
+          }
+        } catch (err) {
+          console.warn('Failed installing local wheel:', err)
+        }
+      }
+
+      if (!installed) {
         for (const whlName of [
           'svr_roughness-latest-py3-none-any.whl',
+          'svr_roughness-0.7.4-py3-none-any.whl',
           'svr_roughness-0.7.3-py3-none-any.whl',
           'svr_roughness-0.7.2-py3-none-any.whl',
           'svr_roughness-0.7.1-py3-none-any.whl'
         ]) {
           try {
-            const whlUrl = new URL(whlName + '?v=' + Date.now(), self.location.href).href
-            await micropip.install(whlUrl)
-            installed = true
-            console.log('Loaded bundled wheel:', whlName)
-            break
+            const fetchUrl = new URL(whlName + '?v=' + Date.now(), self.location.href).href
+            const whlResp = await fetch(fetchUrl, { cache: 'no-store' })
+            if (whlResp.ok) {
+              const buf = await whlResp.arrayBuffer()
+              const vfsPath = '/home/pyodide/' + whlName
+              pyodide.FS.writeFile(vfsPath, new Uint8Array(buf))
+              pyodide.globals.set('_local_whl_path', vfsPath)
+              await pyodide.runPythonAsync(`
+import micropip
+await micropip.install("emfs:" + _local_whl_path, deps=False)
+`)
+              installed = true
+              console.log('Loaded bundled wheel:', whlName)
+              break
+            }
           } catch (err) {
-            // Continue to the next bundled wheel.
+            console.warn('Failed installing bundled wheel ' + whlName + ':', err)
           }
         }
       }
 
       if (!installed) {
         console.warn('Bundled wheel not found; fetching latest svr-roughness from PyPI...')
-        await micropip.install('svr-roughness')
+        postMessage({ type: 'status', text: 'Fetching svr-roughness from PyPI...' })
+        await pyodide.runPythonAsync(`
+import micropip
+await micropip.install('svr-roughness', deps=False)
+`)
       }
 
     // Setup Python analysis helper
@@ -119,7 +150,7 @@ def decompress_if_needed(raw_bytes, file_name):
 
 def run_analysis_payload(file_path_str, file_name, grid_mm, short_cutoff_mm, long_cutoff_mm, gaussian_mesh):
     t0 = time.perf_counter()
-    report(12, "Reading scan data...")
+    report(30, "Reading scan data...")
     path = Path(file_path_str)
 
     with path.open("rb") as f:
@@ -138,7 +169,7 @@ def run_analysis_payload(file_path_str, file_name, grid_mm, short_cutoff_mm, lon
         eff_name = file_name
 
     t_decomp = time.perf_counter()
-    report(24, "Parsing 3D coordinates...")
+    report(34, "Parsing 3D coordinates...")
     try:
         pts = load_points(scan_path)
     finally:
