@@ -99,11 +99,13 @@
               <label class="form-label" for="point-size-slider" style="margin-bottom: 0;">Point Size</label>
               <span id="point-size-val" style="font-family: var(--font-mono); font-size: 0.76rem; color: var(--text-secondary); font-weight: 600;">0.5</span>
             </div>
-            <input type="range" id="point-size-slider" min="0" max="2" step="1" value="1" class="form-range" aria-label="Point Size (.25 - .5 - 1)" />
-            <div style="display: flex; justify-content: space-between; font-size: 0.68rem; color: var(--text-muted); font-family: var(--font-mono); padding: 0 2px;">
-              <span>0.25</span>
-              <span>0.5</span>
-              <span>1.0</span>
+            <div class="point-size-slider-wrapper" style="position: relative; padding: 2px 0; cursor: pointer;">
+              <input type="range" id="point-size-slider" min="0" max="2" step="1" value="1" class="form-range" aria-label="Point Size (.25 - .5 - 1)" />
+            </div>
+            <div id="point-size-stops" style="display: flex; justify-content: space-between; font-size: 0.68rem; color: var(--text-muted); font-family: var(--font-mono); padding: 0 2px;">
+              <span class="point-size-stop" data-idx="0" style="cursor: pointer; padding: 2px 6px; user-select: none;">0.25</span>
+              <span class="point-size-stop active" data-idx="1" style="cursor: pointer; padding: 2px 6px; user-select: none;">0.5</span>
+              <span class="point-size-stop" data-idx="2" style="cursor: pointer; padding: 2px 6px; user-select: none;">1.0</span>
             </div>
           </div>
           <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.4rem;">

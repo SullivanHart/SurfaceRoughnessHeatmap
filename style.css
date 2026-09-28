@@ -188,13 +188,34 @@ h1, h2, h3, h4 {
   -webkit-appearance: none;
   appearance: none;
   width: 100%;
-  height: 5px;
+  height: 6px;
   background: var(--border-color);
   border-radius: 3px;
   outline: none;
   cursor: pointer;
   margin: 0.35rem 0;
   transition: background 0.15s ease;
+}
+
+.point-size-slider-wrapper {
+  user-select: none;
+  touch-action: none;
+}
+
+.point-size-stop {
+  cursor: pointer;
+  border-radius: 3px;
+  transition: color 0.15s ease, background-color 0.15s ease, font-weight 0.15s ease;
+}
+
+.point-size-stop:hover {
+  color: var(--isu-cardinal) !important;
+  background: rgba(200, 16, 46, 0.08);
+}
+
+.point-size-stop.active {
+  color: var(--isu-cardinal) !important;
+  font-weight: 700 !important;
 }
 
 .form-range::-webkit-slider-thumb {

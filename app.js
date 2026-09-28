@@ -1757,27 +1757,68 @@ robustCheckbox.addEventListener('change', () => {
 
 // Point size slider (.25 - .5 - 1.0)
 const POINT_SIZES = [0.25, 0.5, 1.0]
+
+function setDiscretePointSize (idx) {
+  const clampedIdx = Math.max(0, Math.min(2, idx))
+  if (pointSizeSlider && parseInt(pointSizeSlider.value, 10) !== clampedIdx) {
+    pointSizeSlider.value = clampedIdx
+  }
+  const sz = POINT_SIZES[clampedIdx] !== undefined ? POINT_SIZES[clampedIdx] : 0.5
+  pointCloudMarkerSize = sz
+  if (pointSizeVal) {
+    pointSizeVal.textContent = sz
+  }
+  document.querySelectorAll('.point-size-stop').forEach(s => {
+    s.classList.toggle('active', s.getAttribute('data-idx') === String(clampedIdx))
+  })
+
+  // 1. Update WebGL PointCloudViewer on the cube
+  if (pointCloudViewer) {
+    pointCloudViewer.setPointSize(sz)
+  }
+
+  // 2. Update Plotly 3D Surface Topography
+  if (currentViewMode === '3d-surface') {
+    const chartContainerElem = document.getElementById('chart-container')
+    if (chartContainerElem && chartContainerElem.data && chartContainerElem.data.length > 0) {
+      try {
+        Plotly.restyle('chart-container', { 'marker.size': sz })
+      } catch (err) {}
+    }
+  }
+}
+
 if (pointSizeSlider) {
   pointSizeSlider.addEventListener('input', () => {
     const idx = parseInt(pointSizeSlider.value, 10)
-    const sz = POINT_SIZES[idx] !== undefined ? POINT_SIZES[idx] : 0.5
-    pointCloudMarkerSize = sz
-    if (pointSizeVal) {
-      pointSizeVal.textContent = sz
-    }
-    if (pointCloudViewer) {
-      pointCloudViewer.setPointSize(sz)
-    }
-    if (currentViewMode === '3d-surface') {
-      const chartContainerElem = document.getElementById('chart-container')
-      if (chartContainerElem && chartContainerElem.data && chartContainerElem.data.length > 0) {
-        try {
-          Plotly.restyle('chart-container', { 'marker.size': sz })
-        } catch (err) {}
-      }
-    }
+    setDiscretePointSize(idx)
+  })
+  pointSizeSlider.addEventListener('change', () => {
+    const idx = parseInt(pointSizeSlider.value, 10)
+    setDiscretePointSize(idx)
   })
 }
+
+// Click anywhere on wrapper or track to jump directly to stop
+const pointSizeWrapper = document.querySelector('.point-size-slider-wrapper')
+if (pointSizeWrapper) {
+  pointSizeWrapper.addEventListener('click', e => {
+    const rect = pointSizeWrapper.getBoundingClientRect()
+    const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width))
+    const idx = Math.round(ratio * 2)
+    setDiscretePointSize(idx)
+  })
+}
+
+// Click directly on .25, .5, 1.0 text labels
+document.querySelectorAll('.point-size-stop').forEach(stopEl => {
+  stopEl.addEventListener('click', e => {
+    e.preventDefault()
+    e.stopPropagation()
+    const idx = parseInt(stopEl.getAttribute('data-idx'), 10)
+    setDiscretePointSize(idx)
+  })
+})
 
 // Physical filter settings re-run analysis
 ;[gridPitchInput, shortCutoffInput, longCutoffInput, gaussianCheckbox].forEach(

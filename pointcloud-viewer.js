@@ -681,7 +681,7 @@ class PointCloudViewer {
 
   setPointSize (sz) {
     this.pointSize = Math.max(0.1, sz)
-    this.requestRender()
+    this.render()
   }
 
   setTheme (isDark) {
@@ -893,7 +893,16 @@ class PointCloudViewer {
     this.lastMVP = mvpMat
 
     gl.uniformMatrix4fv(this.uniforms.mvp, false, mvpMat)
-    gl.uniform1f(this.uniforms.pointSize, this.pointSize * (window.devicePixelRatio || 1))
+    const dpr = Math.min(2.0, window.devicePixelRatio || 1)
+    let pointPx = 2.0 * dpr
+    if (this.pointSize <= 0.3) {
+      pointPx = 1.0 * dpr
+    } else if (this.pointSize <= 0.6) {
+      pointPx = 2.0 * dpr
+    } else {
+      pointPx = 4.0 * dpr
+    }
+    gl.uniform1f(this.uniforms.pointSize, pointPx)
     gl.uniform1f(this.uniforms.activePatchIndex, this.activePatchIndex)
     gl.uniform1f(this.uniforms.showUnassigned, this.showUnassigned ? 1.0 : 0.0)
     if (this.uniforms.showHeatmap) {
