@@ -750,7 +750,11 @@ function selectFace (index) {
     setTimeout(() => {
       updateActiveChart()
       if (loadingOverlay) loadingOverlay.style.display = 'none'
-    }, 10)
+      const cont = document.getElementById('chart-container')
+      if (cont && window.Plotly) {
+        Plotly.Plots.resize(cont)
+      }
+    }, 20)
   })
 }
 
@@ -1323,7 +1327,9 @@ function render3DSurface (target) {
     })
   }
 
-  Plotly.react('chart-container', traces, layout, config)
+  Plotly.react('chart-container', traces, layout, config).then(() => {
+    Plotly.Plots.resize('chart-container')
+  })
 
 
   if (chartContainerElem && !chartContainerElem._zaxisListenerAttached) {

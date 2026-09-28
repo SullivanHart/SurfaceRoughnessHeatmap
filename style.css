@@ -586,6 +586,11 @@ details.standards-panel[open] summary {
   position: relative;
 }
 
+#chart-container .plot-container,
+#chart-container .svg-container {
+  height: 100% !important;
+}
+
 .chart-loading-overlay {
   position: absolute;
   top: 0;

@@ -4,11 +4,6 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
-  repository_dispatch:
-    types: [svr-roughness-updated]
-  schedule:
-    # Check for new package releases every Sunday at midnight
-    - cron: '0 0 * * 0'
 
 permissions:
   contents: read
@@ -37,18 +32,13 @@ jobs:
       - name: Fetch Latest svr-roughness Wheel
         run: |
           mkdir -p tmp_wheel
-          echo "Attempting to download latest svr-roughness wheel from PyPI..."
-          if pip download --no-deps svr-roughness -d tmp_wheel/; then
-            WHL_FILE=$(ls tmp_wheel/*.whl | head -n 1)
-            echo "Successfully fetched $WHL_FILE from PyPI"
-            # Remove existing wheels and replace with newly fetched wheel
-            rm -f svr_roughness-*.whl
-            cp "$WHL_FILE" ./
-            cp "$WHL_FILE" ./svr_roughness-latest-py3-none-any.whl
-            echo "Updated bundled wheel to latest PyPI version."
-          else
-            echo "PyPI download not available or failed; using existing bundled wheel if present."
-          fi
+          echo "Downloading latest svr-roughness wheel from PyPI..."
+          pip download --no-deps svr-roughness -d tmp_wheel/
+          WHL_FILE=$(ls tmp_wheel/*.whl | head -n 1)
+          echo "Successfully fetched $WHL_FILE from PyPI"
+          rm -f svr_roughness-*.whl
+          cp "$WHL_FILE" ./svr_roughness-latest-py3-none-any.whl
+          echo "Updated bundled wheel to: $WHL_FILE"
 
       - name: Setup GitHub Pages
         uses: actions/configure-pages@v4
