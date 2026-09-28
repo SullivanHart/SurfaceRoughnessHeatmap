@@ -111,15 +111,14 @@ class PointCloudViewer {
           if (aSvr > 0.0) {
             float span = max(uSvrMax - uSvrMin, 0.001);
             float normSvr = clamp((aSvr - uSvrMin) / span, 0.0, 1.0);
-            vec3 heatColor = (uColormapType > 0.5) ? jetColormap(normSvr) : viridisColormap(normSvr);
-            vColor = isActive ? heatColor : heatColor * 0.30;
+            vColor = (uColormapType > 0.5) ? jetColormap(normSvr) : viridisColormap(normSvr);
           } else {
             // Neutral grey for edge/unassigned/invalid points - face colors are strictly hidden!
-            vColor = isActive ? vec3(0.65, 0.68, 0.74) : vec3(0.40, 0.42, 0.46);
+            vColor = vec3(0.65, 0.68, 0.74);
           }
         } else {
           // Heatmap is hidden: show designated face colors
-          vColor = isActive ? aColor : aColor * 0.25;
+          vColor = aColor;
         }
 
         gl_Position = uMVP * vec4(aPosition, 1.0);

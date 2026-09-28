@@ -94,6 +94,18 @@
               <option value="Rainbow">Rainbow</option>
             </select>
           </div>
+          <div class="form-group" style="margin-bottom: 0.75rem;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.2rem;">
+              <label class="form-label" for="point-size-slider" style="margin-bottom: 0;">Point Size</label>
+              <span id="point-size-val" style="font-family: var(--font-mono); font-size: 0.76rem; color: var(--text-secondary); font-weight: 600;">0.5</span>
+            </div>
+            <input type="range" id="point-size-slider" min="0" max="2" step="1" value="1" class="form-range" aria-label="Point Size (.25 - .5 - 1)" />
+            <div style="display: flex; justify-content: space-between; font-size: 0.68rem; color: var(--text-muted); font-family: var(--font-mono); padding: 0 2px;">
+              <span>0.25</span>
+              <span>0.5</span>
+              <span>1.0</span>
+            </div>
+          </div>
           <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.4rem;">
             <input type="checkbox" id="show-heatmap" checked />
             <label for="show-heatmap" class="form-label" style="font-size: 0.78rem;">Show Heatmap Overlay</label>

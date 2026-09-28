@@ -15,6 +15,8 @@ const progressBar = document.getElementById('progress-bar')
 const progressFill = document.getElementById('progress-fill')
 const unitSelect = document.getElementById('unit-select')
 const paletteSelect = document.getElementById('palette-select')
+const pointSizeSlider = document.getElementById('point-size-slider')
+const pointSizeVal = document.getElementById('point-size-val')
 const robustCheckbox = document.getElementById('robust-contrast')
 const showHeatmapCheckbox = document.getElementById('show-heatmap')
 const showUnassignedCheckbox = document.getElementById('show-unassigned')
@@ -561,7 +563,7 @@ function render3DFaces (res) {
   selectOverview()
 }
 
-function selectOverview () {
+function selectOverview (options = {}) {
   if (!currentResult) return
   activePatchIndex = -1
   currentViewMode = '3d-object'
@@ -630,7 +632,9 @@ function selectOverview () {
 
   if (pointCloudViewer) {
     pointCloudViewer.setActivePatch(-1)
-    pointCloudViewer.setCameraView('iso')
+    if (!options || !options.keepCamera) {
+      pointCloudViewer.setCameraView('iso')
+    }
   }
 
   // Render 3D Part View & Variogram for overview
@@ -651,10 +655,10 @@ function orientFaceInOverview (index) {
     })
   }
 
-  // Smoothly turn 3D cube camera to face and highlight face on the All view
+  // Smoothly turn 3D cube camera to face on the All view
   if (pointCloudViewer) {
     pointCloudViewer.alignToFace(index)
-    pointCloudViewer.setActivePatch(index)
+    pointCloudViewer.setActivePatch(-1)
   }
 }
 
@@ -1143,7 +1147,7 @@ function render3DSurface (target) {
     y: validY,
     z: validZ,
     marker: showHeatmap ? {
-      size: 0.5,
+      size: pointCloudMarkerSize,
       color: validIntensity,
       colorscale: palette,
       cmin: cmin,
@@ -1164,7 +1168,7 @@ function render3DSurface (target) {
       },
       opacity: 1.0
     } : {
-      size: 0.5,
+      size: pointCloudMarkerSize,
       color: faceColor,
       showscale: false,
       opacity: 1.0
@@ -1319,7 +1323,7 @@ function render3DSurface (target) {
       y: invalidY,
       z: invalidZ,
       marker: {
-        size: 0.5,
+        size: pointCloudMarkerSize,
         color: isDark ? '#64748b' : '#94a3b8',
         opacity: 0.75
       },
@@ -1704,18 +1708,9 @@ function handleMiniPreviewClick (e) {
   if (!currentResult || !currentResult.patches) return
   const faceIdx = activePatchIndex >= 0 ? activePatchIndex : 0
 
-  currentViewMode = '3d-object'
-  const chartContainer = document.getElementById('chart-container')
-  const pcCanvas = document.getElementById('pointcloud-canvas')
-  const loadingOverlay = document.getElementById('chart-loading-overlay')
-  if (loadingOverlay) loadingOverlay.style.display = 'none'
-  if (chartContainer) chartContainer.style.display = 'none'
-  if (pcCanvas) pcCanvas.style.display = 'block'
-
-  render3DObject(currentResult)
+  selectOverview({ keepCamera: true })
   if (pointCloudViewer) {
-    pointCloudViewer.resize()
-    pointCloudViewer.setActivePatch(faceIdx)
+    pointCloudViewer.setActivePatch(-1)
     pointCloudViewer.alignToFace(faceIdx)
   }
 }
@@ -1759,6 +1754,30 @@ robustCheckbox.addEventListener('change', () => {
     updateActiveChart()
   }
 })
+
+// Point size slider (.25 - .5 - 1.0)
+const POINT_SIZES = [0.25, 0.5, 1.0]
+if (pointSizeSlider) {
+  pointSizeSlider.addEventListener('input', () => {
+    const idx = parseInt(pointSizeSlider.value, 10)
+    const sz = POINT_SIZES[idx] !== undefined ? POINT_SIZES[idx] : 0.5
+    pointCloudMarkerSize = sz
+    if (pointSizeVal) {
+      pointSizeVal.textContent = sz
+    }
+    if (pointCloudViewer) {
+      pointCloudViewer.setPointSize(sz)
+    }
+    if (currentViewMode === '3d-surface') {
+      const chartContainerElem = document.getElementById('chart-container')
+      if (chartContainerElem && chartContainerElem.data && chartContainerElem.data.length > 0) {
+        try {
+          Plotly.restyle('chart-container', { 'marker.size': sz })
+        } catch (err) {}
+      }
+    }
+  })
+}
 
 // Physical filter settings re-run analysis
 ;[gridPitchInput, shortCutoffInput, longCutoffInput, gaussianCheckbox].forEach(
