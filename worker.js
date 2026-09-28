@@ -200,12 +200,20 @@ def run_analysis_payload(file_path_str, file_name, grid_mm, short_cutoff_mm, lon
         t_analyze = time.perf_counter()
 
         report(70, "Aligning surface plane...")
+        stride_pts = max(1, int(np.ceil(len(pts) / 250000)))
+        raw_f32 = np.ascontiguousarray(pts[::stride_pts], dtype=np.float32)
+        # Keep full-resolution extents for reporting, using the engine's exact frame.
+        diff = pts - res.plane_centroid_mm
+        u = np.dot(diff, res.plane_x_axis)
+        v = np.dot(diff, res.plane_y_axis)
+        w = np.dot(diff, res.plane_normal)
+        coords = np.column_stack((u, v, w))
         plane = PlaneFit(
             centroid=res.plane_centroid_mm,
             normal=res.plane_normal,
             x_axis=res.plane_x_axis,
             y_axis=res.plane_y_axis,
-            coords=None,
+            coords=coords,
         )
 
         report(82, "Rasterizing height topography...")
@@ -236,21 +244,15 @@ def run_analysis_payload(file_path_str, file_name, grid_mm, short_cutoff_mm, lon
         min_s = float(np.percentile(valid_s, 1)) if len(valid_s) > 0 else float(res.svr_um * 0.5)
         max_s = float(np.percentile(valid_s, 99)) if len(valid_s) > 0 else float(res.svr_um * 1.5)
 
-        # Planar 3D points binary encoding (capped to 250k points for smooth 60fps WebGL)
-        stride_pts = max(1, len(pts) // 250000)
-        raw_f32 = np.ascontiguousarray(pts[::stride_pts], dtype=np.float32)
         sample_b64 = base64.b64encode(raw_f32.tobytes()).decode("ascii")
         stride_light = max(1, len(pts) // 4000)
         sample_pts = np.round(pts[::stride_light], 2).tolist()
 
         pt_svr_b64 = None
         if grid_svr_um is not None and len(raw_f32) > 0:
-            diff = raw_f32 - res.plane_centroid_mm
-            u = np.dot(diff, res.plane_x_axis)
-            v = np.dot(diff, res.plane_y_axis)
             orig_x = float(res.grid_origin_mm[0]) if res.grid_origin_mm is not None else 0.0
             orig_y = float(res.grid_origin_mm[1]) if res.grid_origin_mm is not None else 0.0
-            pt_svr = interpolate_heatmap_at_points(grid_svr_um, orig_x, orig_y, grid_mm, u, v)
+            pt_svr = interpolate_heatmap_at_points(grid_svr_um, orig_x, orig_y, grid_mm, u[::stride_pts], v[::stride_pts])
             pt_svr = np.nan_to_num(pt_svr, nan=float(res.svr_um))
             pt_svr_b64 = base64.b64encode(np.ascontiguousarray(pt_svr, dtype=np.float32).tobytes()).decode("ascii")
 

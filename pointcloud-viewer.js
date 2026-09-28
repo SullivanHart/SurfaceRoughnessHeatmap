@@ -412,9 +412,9 @@ class PointCloudViewer {
         this.globalMaxSvr = maxS
 
         for (let i = 0; i < ptCount; i++) {
-          colors[i * 3] = 0.145
-          colors[i * 3 + 1] = 0.388
-          colors[i * 3 + 2] = 0.922
+          colors[i * 3] = 0.784
+          colors[i * 3 + 1] = 0.063
+          colors[i * 3 + 2] = 0.180
           patches[i] = 0
         }
         allPos.push(f32)
