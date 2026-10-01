@@ -217,6 +217,46 @@ function resetProgress () {
 
 let isAnalyzing = false
 let currentAnalysisId = 0
+const errorBanner = document.getElementById('error-banner')
+const errorBannerTitle = document.getElementById('error-banner-title')
+const errorBannerMessage = document.getElementById('error-banner-message')
+const errorBannerActions = document.getElementById('error-banner-actions')
+const errorActionBtn = document.getElementById('error-action-btn')
+const errorBannerClose = document.getElementById('error-banner-close')
+
+function hideErrorBanner () {
+  if (errorBanner) errorBanner.style.display = 'none'
+}
+
+if (errorBannerClose) {
+  errorBannerClose.addEventListener('click', hideErrorBanner)
+}
+
+function showErrorBanner (title, message, suggestedPitch) {
+  if (!errorBanner) return
+  if (errorBannerTitle) errorBannerTitle.textContent = title || 'Analysis Notification'
+  if (errorBannerMessage) errorBannerMessage.textContent = message || ''
+
+  if (suggestedPitch && errorBannerActions && errorActionBtn) {
+    errorBannerActions.style.display = 'flex'
+    errorActionBtn.textContent = `Set Grid Pitch to ${suggestedPitch} mm & Re-run`
+    errorActionBtn.onclick = () => {
+      hideErrorBanner()
+      if (gridPitchInput) {
+        gridPitchInput.value = suggestedPitch.toString()
+      }
+      const panel = document.getElementById('standards-panel')
+      if (panel) panel.open = true
+      if (selectedFile) {
+        startAnalysis(selectedFile)
+      }
+    }
+  } else if (errorBannerActions) {
+    errorBannerActions.style.display = 'none'
+  }
+  errorBanner.style.display = 'flex'
+}
+
 let workerRuntimeReady = false
 
 function initWorker () {
@@ -224,7 +264,7 @@ function initWorker () {
   worker = new Worker(workerUrl)
 
   worker.onmessage = function (e) {
-    const { type, text, percent, data, error, analysisId, mode } = e.data
+    const { type, text, percent, data, error, analysisId, mode, suggestedPitch, isDensitySparsity } = e.data
 
     if (type === 'status') {
       if (statusText) statusText.textContent = text
@@ -256,17 +296,40 @@ function initWorker () {
       isAnalyzing = false
       if (statusDot) statusDot.className = 'status-dot ready'
       completeProgress('Ready')
+      hideErrorBanner()
       currentResult = data
       renderResults(data)
     } else if (type === 'error') {
       isAnalyzing = false
-      if (statusDot) statusDot.className = 'status-dot ready'
+      if (statusDot) statusDot.className = 'status-dot error'
       resetProgress()
       if (resultsContainer) {
         resultsContainer.style.opacity = '1'
         resultsContainer.style.pointerEvents = 'auto'
       }
-      if (statusText) statusText.textContent = 'Error: ' + error
+
+      let cleanMsg = (error || '').replace(/^ValueError:\s*/i, '').replace(/^RuntimeError:\s*/i, '').trim()
+      let sugg = suggestedPitch
+      if (!sugg) {
+        const m = cleanMsg.match(/--grid-mm\s+([0-9]+(?:\.[0-9]+)?)/)
+        if (m) {
+          try { sugg = parseFloat(m[1]) } catch (_) {}
+        }
+      }
+      const isDensity = isDensitySparsity || cleanMsg.includes('contiguous surface area') || cleanMsg.includes('point spacing') || cleanMsg.includes('coarser than')
+
+      if (isDensity) {
+        const pitchVal = gridPitchInput ? gridPitchInput.value : '0.20'
+        if (statusText) statusText.textContent = `Scan too sparse for ${pitchVal} mm grid (suggested: ${sugg || 'coarser'} mm)`
+        showErrorBanner(
+          'Scan Resolution Incompatible with Grid Pitch',
+          cleanMsg,
+          sugg
+        )
+      } else {
+        if (statusText) statusText.textContent = 'Error: ' + cleanMsg
+        showErrorBanner('Analysis Error', cleanMsg, null)
+      }
       console.error('Analysis error:', error)
     }
   }
@@ -307,12 +370,14 @@ function handleFileSelect (file) {
   }
 
   resetProgress()
+  hideErrorBanner()
   setProgress(2, `Loading ${file.name}...`)
 
   startAnalysis(file)
 }
 
 async function startAnalysis (file) {
+  hideErrorBanner()
   isAnalyzing = true
   const thisAnalysisId = ++currentAnalysisId
   analysisStartTime = performance.now()

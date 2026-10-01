@@ -130,7 +130,7 @@ def decompress_if_needed(raw_bytes, file_name):
             return zf.read(candidates[0]), Path(candidates[0]).name
     return raw_bytes, file_name
 
-def run_analysis_payload(file_path_str, file_name, grid_mm, short_cutoff_mm, long_cutoff_mm, gaussian_mesh):
+def _run_analysis_payload_impl(file_path_str, file_name, grid_mm, short_cutoff_mm, long_cutoff_mm, gaussian_mesh):
     t0 = time.perf_counter()
     report(8, "Reading scan data...")
     path = Path(file_path_str)
@@ -458,6 +458,33 @@ def run_analysis_payload(file_path_str, file_name, grid_mm, short_cutoff_mm, lon
         }
     report(97, "Finalizing report...")
     return json.dumps(out)
+
+def run_analysis_payload(file_path_str, file_name, grid_mm, short_cutoff_mm, long_cutoff_mm, gaussian_mesh):
+    try:
+        return _run_analysis_payload_impl(file_path_str, file_name, grid_mm, short_cutoff_mm, long_cutoff_mm, gaussian_mesh)
+    except (ValueError, RuntimeError) as exc:
+        msg = str(exc)
+        sugg = None
+        import re
+        m = re.search(r"--grid-mm\s+([0-9]+(?:\.[0-9]+)?)", msg)
+        if m:
+            try:
+                sugg = float(m.group(1))
+            except ValueError:
+                pass
+        return json.dumps({
+            "error": msg,
+            "error_type": type(exc).__name__,
+            "suggested_pitch": sugg,
+            "is_density_sparsity": bool("contiguous surface area" in msg or "point spacing" in msg or "coarser than" in msg)
+        })
+    except Exception as exc:
+        return json.dumps({
+            "error": str(exc),
+            "error_type": type(exc).__name__,
+            "suggested_pitch": None,
+            "is_density_sparsity": False
+        })
 `)
 
     pyodideReady = true
@@ -519,10 +546,41 @@ run_analysis_payload(_file_path, _file_name, _grid_mm, _short_cutoff_mm, _long_c
         return
       }
       const result = JSON.parse(jsonStr)
+      if (result.error) {
+        postMessage({
+          type: 'error',
+          error: result.error,
+          errorType: result.error_type,
+          suggestedPitch: result.suggested_pitch,
+          isDensitySparsity: result.is_density_sparsity,
+          analysisId: analysisId
+        })
+        return
+      }
       postMessage({ type: 'result', data: result, analysisId: analysisId })
     } catch (err) {
       if (thisJobId === currentWorkerJobId) {
-        postMessage({ type: 'error', error: err.message || err.toString() })
+        let cleanErr = err.message || err.toString()
+        if (cleanErr.includes('Traceback (most recent call last):')) {
+          const lines = cleanErr.trim().split('\n')
+          const lastLine = lines[lines.length - 1].trim()
+          if (lastLine) {
+            cleanErr = lastLine.replace(/^[A-Za-z0-9_]+Error:\s*/, '')
+          }
+        }
+        let sugg = null
+        const m = cleanErr.match(/--grid-mm\s+([0-9]+(?:\.[0-9]+)?)/)
+        if (m) {
+          try { sugg = parseFloat(m[1]) } catch (_) {}
+        }
+        const isDensity = cleanErr.includes('contiguous surface area') || cleanErr.includes('point spacing') || cleanErr.includes('coarser than')
+        postMessage({
+          type: 'error',
+          error: cleanErr,
+          suggestedPitch: sugg,
+          isDensitySparsity: isDensity,
+          analysisId: analysisId
+        })
       }
     }
   }
