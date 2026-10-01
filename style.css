@@ -1039,95 +1039,74 @@ details.standards-panel[open] summary {
   font-weight: 700;
 }
 
-/* ── Error & Resolution Banner ────────────────────────────── */
+/* ── Status Notification Strip (Error / Sparsity Banner) ── */
 
 .status-dot.error {
-  background: #ef4444;
+  background: var(--badge-warn-text);
 }
 
-.error-banner {
+.status-ribbon.error-banner {
   display: flex;
-  align-items: flex-start;
-  gap: 0.85rem;
-  padding: 1rem 1.25rem;
-  margin-bottom: 1.25rem;
-  background: rgba(239, 68, 68, 0.08);
-  border: 1px solid rgba(239, 68, 68, 0.28);
-  border-left: 4px solid #ef4444;
-  border-radius: 4px;
-  animation: fadeIn 0.2s ease-out;
+  align-items: center;
+  justify-content: space-between;
+  border-left: 3px solid var(--isu-cardinal);
+  padding: 0.55rem 0.85rem;
+  margin-bottom: 1rem;
 }
 
-.error-banner-icon {
-  color: #ef4444;
-  flex-shrink: 0;
-  margin-top: 0.15rem;
-}
-
-.error-banner-content {
+.status-ribbon.error-banner .ribbon-item {
   flex: 1;
-}
-
-.error-banner-title {
-  font-family: var(--font-sans);
-  font-weight: 700;
-  font-size: 0.95rem;
-  color: var(--text-main);
-  margin-bottom: 0.35rem;
-  letter-spacing: -0.01em;
-}
-
-.error-banner-message {
-  font-family: var(--font-sans);
-  font-size: 0.85rem;
-  color: var(--text-secondary);
-  line-height: 1.5;
-  margin-bottom: 0.6rem;
-}
-
-.error-banner-actions {
+  min-width: 0;
   display: flex;
   align-items: center;
-  gap: 0.75rem;
-  margin-top: 0.4rem;
+  gap: 0.55rem;
+  flex-wrap: wrap;
 }
 
-.error-action-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.4rem;
-  background: #ef4444;
-  color: #ffffff;
-  border: none;
-  border-radius: 3px;
-  padding: 0.4rem 0.85rem;
-  font-family: var(--font-sans);
+.status-ribbon.error-banner .error-banner-message {
   font-size: 0.82rem;
-  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.status-ribbon.error-banner .error-banner-actions {
+  display: flex;
+  align-items: center;
+  margin-left: auto;
+  gap: 0.5rem;
+}
+
+.status-ribbon.error-banner .error-action-btn {
+  display: inline-block;
   cursor: pointer;
-  transition: background 0.15s ease, transform 0.1s ease;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-color);
+  color: var(--text-main);
+  font-family: var(--font-mono);
+  font-size: 0.76rem;
+  font-weight: 600;
+  padding: 0.25rem 0.65rem;
+  border-radius: 2px;
+  transition: background 0.1s ease, border-color 0.1s ease;
 }
 
-.error-action-btn:hover {
-  background: #dc2626;
+.status-ribbon.error-banner .error-action-btn:hover {
+  background: var(--bg-subtle);
+  border-color: var(--text-muted);
 }
 
-.error-action-btn:active {
-  transform: translateY(1px);
-}
-
-.error-banner-close {
+.status-ribbon.error-banner .error-banner-close {
   background: transparent;
   border: none;
-  font-size: 1.25rem;
+  font-size: 1.1rem;
   line-height: 1;
   color: var(--text-muted);
   cursor: pointer;
-  padding: 0.2rem 0.4rem;
+  padding: 0.1rem 0.35rem;
   border-radius: 2px;
-  transition: color 0.15s ease;
+  margin-left: 0.5rem;
 }
 
-.error-banner-close:hover {
+.status-ribbon.error-banner .error-banner-close:hover {
   color: var(--text-main);
 }
+

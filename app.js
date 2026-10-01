@@ -218,7 +218,8 @@ function resetProgress () {
 let isAnalyzing = false
 let currentAnalysisId = 0
 const errorBanner = document.getElementById('error-banner')
-const errorBannerTitle = document.getElementById('error-banner-title')
+const errorBannerBadge = document.getElementById('error-banner-badge')
+const errorBannerLabel = document.getElementById('error-banner-label')
 const errorBannerMessage = document.getElementById('error-banner-message')
 const errorBannerActions = document.getElementById('error-banner-actions')
 const errorActionBtn = document.getElementById('error-action-btn')
@@ -232,14 +233,15 @@ if (errorBannerClose) {
   errorBannerClose.addEventListener('click', hideErrorBanner)
 }
 
-function showErrorBanner (title, message, suggestedPitch) {
+function showErrorBanner (badgeText, labelText, message, suggestedPitch) {
   if (!errorBanner) return
-  if (errorBannerTitle) errorBannerTitle.textContent = title || 'Analysis Notification'
+  if (errorBannerBadge) errorBannerBadge.textContent = badgeText || 'NOTICE'
+  if (errorBannerLabel) errorBannerLabel.textContent = labelText || 'Status:'
   if (errorBannerMessage) errorBannerMessage.textContent = message || ''
 
   if (suggestedPitch && errorBannerActions && errorActionBtn) {
     errorBannerActions.style.display = 'flex'
-    errorActionBtn.textContent = `Set Grid Pitch to ${suggestedPitch} mm & Re-run`
+    errorActionBtn.textContent = `Set Δx = ${suggestedPitch} mm & Retry`
     errorActionBtn.onclick = () => {
       hideErrorBanner()
       if (gridPitchInput) {
@@ -321,14 +323,15 @@ function initWorker () {
       if (isDensity) {
         const pitchVal = gridPitchInput ? gridPitchInput.value : '0.20'
         if (statusText) statusText.textContent = `Scan too sparse for ${pitchVal} mm grid (suggested: ${sugg || 'coarser'} mm)`
-        showErrorBanner(
-          'Scan Resolution Incompatible with Grid Pitch',
-          cleanMsg,
-          sugg
-        )
+        let briefMsg = cleanMsg
+        const mSpacing = cleanMsg.match(/spacing for this scan is ~([0-9.]+ mm(?: \([^)]+\))?)/)
+        if (mSpacing) {
+          briefMsg = `Scan point spacing is ~${mSpacing[1]}, too coarse for requested ${pitchVal} mm pitch.`
+        }
+        showErrorBanner('SPARSITY', 'Grid Pitch:', briefMsg, sugg)
       } else {
         if (statusText) statusText.textContent = 'Error: ' + cleanMsg
-        showErrorBanner('Analysis Error', cleanMsg, null)
+        showErrorBanner('ERROR', 'Engine:', cleanMsg, null)
       }
       console.error('Analysis error:', error)
     }
