@@ -10,7 +10,7 @@ rm -f tmp_wheel/*.whl
 
 # 1. Try downloading latest wheel from PyPI
 echo "--> Checking PyPI for svr-roughness..."
-python3 -m pip download --no-deps svr-roughness -d tmp_wheel/ 2>/dev/null || true
+python3 -m pip download --no-deps --only-binary=:all: svr-roughness -d tmp_wheel/ 2>/dev/null || true
 
 # 2. If not on PyPI or newer release needed, build directly from GitHub repository
 if [ -z "$(ls tmp_wheel/*.whl 2>/dev/null)" ]; then
