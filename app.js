@@ -412,9 +412,10 @@ async function startAnalysis (file) {
 }
 
 function formatVal (valUm, unit) {
-  if (unit === 'mm') return (valUm / 1000.0).toFixed(4) + ' mm'
-  if (unit === 'in') return (valUm / 25400.0).toFixed(5) + ' in'
-  return valUm.toFixed(3) + ' µm'
+  if (typeof valUm !== 'number' || isNaN(valUm)) return '-'
+  if (unit === 'mm') return (valUm / 1000.0).toFixed(3) + ' mm'
+  if (unit === 'in') return (valUm / 25400.0).toFixed(4) + ' in'
+  return valUm.toFixed(1) + ' µm'
 }
 
 function renderResults (res) {
@@ -1227,7 +1228,7 @@ function render3DSurface (target) {
       opacity: 1.0
     },
     hovertemplate: showHeatmap
-      ? `Surface X: %{x:.2f} mm<br>Surface Y: %{y:.2f} mm<br>Elevation Z: %{z:.3f} mm<br>Local S_VR: %{marker.color:.4f} ${unit}<extra></extra>`
+      ? `Surface X: %{x:.2f} mm<br>Surface Y: %{y:.2f} mm<br>Elevation Z: %{z:.3f} mm<br>Local S_VR: %{marker.color:${unit === 'µm' ? '.1f' : (unit === 'mm' ? '.3f' : '.4f')}} ${unit}<extra></extra>`
       : `${target.name || 'Face'}<br>Surface X: %{x:.2f} mm<br>Surface Y: %{y:.2f} mm<br>Elevation Z: %{z:.3f} mm<extra></extra>`
   }
 
@@ -1544,7 +1545,7 @@ function renderHeatmap (res) {
       tickfont: { size: 10, color: chartText }
     } : undefined,
     hovertemplate: showHeatmap
-      ? `Surface X: %{x:.2f} mm<br>Surface Y: %{y:.2f} mm<br>Local S_VR: %{z:.4f} ${unit}<extra></extra>`
+      ? `Surface X: %{x:.2f} mm<br>Surface Y: %{y:.2f} mm<br>Local S_VR: %{z:${unit === 'µm' ? '.1f' : (unit === 'mm' ? '.3f' : '.4f')}} ${unit}<extra></extra>`
       : `Surface X: %{x:.2f} mm<br>Surface Y: %{y:.2f} mm<extra></extra>`
   }
 
