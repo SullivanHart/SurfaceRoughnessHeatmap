@@ -707,6 +707,89 @@ details.standards-panel[open] summary {
   cursor: grabbing;
 }
 
+/* S_VR Colorbar Legend Overlay for Whole Part 3D Scan View */
+.all-view-colorbar {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  z-index: 10;
+  pointer-events: none;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  padding: 8px 10px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.2);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  user-select: none;
+  transition: opacity 0.15s ease;
+}
+
+[data-theme="dark"] .all-view-colorbar {
+  background: rgba(29, 32, 38, 0.88);
+  backdrop-filter: blur(8px);
+}
+
+[data-theme="light"] .all-view-colorbar {
+  background: rgba(255, 255, 255, 0.90);
+  backdrop-filter: blur(8px);
+}
+
+.colorbar-title {
+  font-family: var(--font-sans);
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text-main);
+  letter-spacing: 0.02em;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.colorbar-content {
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
+  gap: 8px;
+  height: 180px;
+}
+
+.colorbar-strip {
+  width: 14px;
+  height: 100%;
+  border-radius: 2px;
+  border: 1px solid var(--border-color);
+  flex-shrink: 0;
+}
+
+.colorbar-strip.viridis {
+  background: linear-gradient(to top, #440154, #482878, #3e4989, #31688e, #26828e, #1f9e89, #35b779, #6ece58, #b5de2b, #fde725);
+}
+
+.colorbar-strip.jet {
+  background: linear-gradient(to top, #0000ff, #00ffff, #00ff00, #ffff00, #ff0000);
+}
+
+.colorbar-ticks {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  height: 100%;
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  color: var(--text-secondary);
+  line-height: 1;
+  padding: 0;
+  margin: 0;
+  text-align: left;
+}
+
+.colorbar-tick {
+  display: block;
+  white-space: nowrap;
+}
+
 /* 3D Shape Mini-Preview Orientation Widget inside Results Panel */
 .shape-mini-preview {
   margin: 0.4rem 0 0.65rem 0;

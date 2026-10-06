@@ -65,7 +65,7 @@ if target_dir not in sys.path:
           text: 'Loading bundled svr-roughness wheel...'
         })
         const whlUrl = new URL('svr_roughness-latest-py3-none-any.whl', self.location.href).href
-        const resp = await fetch(whlUrl, { cache: 'no-store' })
+        const resp = await fetch(whlUrl)
         if (!resp.ok) {
           throw new Error(`Failed to load bundled wheel (${whlUrl}): HTTP ${resp.status} ${resp.statusText}`)
         }
@@ -95,10 +95,11 @@ import time
 import json
 import gzip
 import zipfile
-import base64
 from pathlib import Path
 import numpy as np
 import js
+
+_last_binary_payload = None
 
 def report(pct, text):
     try:
@@ -111,11 +112,7 @@ from svr_roughness.config import RoughnessConfig
 from svr_roughness.io import load_points
 from svr_roughness.result import format_report, RoughnessResult, PlaneFit
 
-try:
-    from svr_roughness.decomposition import DecompositionConfig, decompose_3d_object, is_planar_surface
-    HAS_DECOMPOSITION = True
-except ImportError:
-    HAS_DECOMPOSITION = False
+from svr_roughness.decomposition import DecompositionConfig, decompose_3d_object, is_planar_surface
 
 def decompress_if_needed(raw_bytes, file_name):
     lower = file_name.lower()
@@ -131,6 +128,8 @@ def decompress_if_needed(raw_bytes, file_name):
     return raw_bytes, file_name
 
 def _run_analysis_payload_impl(file_path_str, file_name, grid_mm, short_cutoff_mm, long_cutoff_mm, gaussian_mesh):
+    global _last_binary_payload
+    _last_binary_payload = None
     t0 = time.perf_counter()
     report(8, "Reading scan data...")
     path = Path(file_path_str)
@@ -166,26 +165,7 @@ def _run_analysis_payload_impl(file_path_str, file_name, grid_mm, short_cutoff_m
         gaussian_mesh=gaussian_mesh,
     )
 
-    def get_closest_rating(val, standards):
-        return min(standards, key=lambda item: abs(val - item[1]))[0]
-
-    def make_comparators(val_um):
-        return {
-            "SCRATA (A802)": get_closest_rating(
-                val_um,
-                [("A1", 26.4), ("A2", 44.8), ("A3", 63.0), ("A4", 131.5)]
-            ),
-            "GAR C-9": get_closest_rating(
-                val_um,
-                [("C-9 200", 9.2), ("C-9 300", 16.3), ("C-9 420", 18.7), ("C-9 560", 27.4), ("C-9 720", 58.5), ("C-9 900", 71.1)]
-            ),
-            "ACI SIS": get_closest_rating(
-                val_um,
-                [("SIS-1", 9.4), ("SIS-2", 19.9), ("SIS-3", 24.5), ("SIS-4", 80.1)]
-            ),
-        }
-
-    is_planar = is_planar_surface(pts) if HAS_DECOMPOSITION else True
+    is_planar = is_planar_surface(pts)
 
     if is_planar:
         report(18, f"Calculating surface roughness ({len(pts):,} pts)...")
@@ -244,17 +224,22 @@ def _run_analysis_payload_impl(file_path_str, file_name, grid_mm, short_cutoff_m
         min_s = float(np.percentile(valid_s, 1)) if len(valid_s) > 0 else float(res.svr_um * 0.5)
         max_s = float(np.percentile(valid_s, 99)) if len(valid_s) > 0 else float(res.svr_um * 1.5)
 
-        sample_b64 = base64.b64encode(raw_f32.tobytes()).decode("ascii")
         stride_light = max(1, len(pts) // 4000)
         sample_pts = np.round(pts[::stride_light], 2).tolist()
 
-        pt_svr_b64 = None
+        pt_svr_bytes = None
         if grid_svr_um is not None and len(raw_f32) > 0:
             orig_x = float(res.grid_origin_mm[0]) if res.grid_origin_mm is not None else 0.0
             orig_y = float(res.grid_origin_mm[1]) if res.grid_origin_mm is not None else 0.0
             pt_svr = interpolate_heatmap_at_points(grid_svr_um, orig_x, orig_y, grid_mm, u[::stride_pts], v[::stride_pts])
             pt_svr = np.nan_to_num(pt_svr, nan=float(res.svr_um))
-            pt_svr_b64 = base64.b64encode(np.ascontiguousarray(pt_svr, dtype=np.float32).tobytes()).decode("ascii")
+            pt_svr_bytes = np.ascontiguousarray(pt_svr, dtype=np.float32).tobytes()
+
+        _last_binary_payload = {
+            "is_3d": False,
+            "sample_points": raw_f32.tobytes(),
+            "sample_svr": pt_svr_bytes,
+        }
 
         elev_g = res.elevation_grid_mm if hasattr(res, "elevation_grid_mm") and res.elevation_grid_mm is not None else res.grid_z_mm
         gz = elev_g * 1000.0 if elev_g is not None else None
@@ -279,10 +264,8 @@ def _run_analysis_payload_impl(file_path_str, file_name, grid_mm, short_cutoff_m
             "grid_svr": grid_svr,
             "grid_z": grid_z,
             "grid_z_pitch_mm": float(grid_mm),
-            "sample_points_b64": sample_b64,
             "sample_points_count": len(raw_f32),
             "sample_points_3d": sample_pts,
-            "sample_svr_b64": pt_svr_b64,
             "grid_width": int(res.grid_width),
             "grid_height": int(res.grid_height),
             "origin_x": float(res.grid_origin_mm[0]),
@@ -291,7 +274,7 @@ def _run_analysis_payload_impl(file_path_str, file_name, grid_mm, short_cutoff_m
             "var_bins": [round(float(x), 4) for x in res.variogram_bins_um],
             "variogram_bins": [round(float(x), 4) for x in res.variogram_bins_um],
             "variogram_counts": [int(x) for x in res.variogram_counts],
-            "comparators": make_comparators(res.svr_um),
+            "comparators": full_res.comparator_equivalents(),
             "report_text": report_str,
             "timings": {
                 "decomp_ms": (t_decomp - t0) * 1000.0,
@@ -312,6 +295,7 @@ def _run_analysis_payload_impl(file_path_str, file_name, grid_mm, short_cutoff_m
 
         num_patches = len(obj_res.patches)
         patches_data = []
+        patch_binaries = []
         for i, p in enumerate(obj_res.patches):
             pct = int(80 + 16 * (i / max(1, num_patches)))
             report(pct, f"Rasterizing topography for {p.name} ({i+1}/{num_patches})...")
@@ -319,18 +303,17 @@ def _run_analysis_payload_impl(file_path_str, file_name, grid_mm, short_cutoff_m
             hmap = compute_heatmap_grid(r.grid, grid_mm, radius_mm=5.0) if r.grid is not None else None
             grid_svr_patch = np.where(np.isnan(hmap), None, np.round(hmap, 3)).tolist() if hmap is not None else []
             coverage_pct = float(np.count_nonzero(~np.isnan(r.grid)) / r.grid.size * 100.0) if (r.grid is not None and r.grid.size > 0) else 0.0
-            comparators = r.comparator_equivalents() if hasattr(r, "comparator_equivalents") else make_comparators(r.svr_um)
+            comparators = r.comparator_equivalents()
 
             # Sampled points and per-point local Svr values
             stride_pts = max(1, len(p.points) // 300000)
             sampled_pts = p.points[::stride_pts]
             raw_f32 = np.ascontiguousarray(sampled_pts, dtype=np.float32)
-            sample_b64 = base64.b64encode(raw_f32.tobytes()).decode("ascii")
             stride_light = max(1, len(p.points) // 3000)
             sample_pts = np.round(p.points[::stride_light], 2).tolist()
 
             # Compute local SVR for each sampled 3D point via continuous bilinear interpolation
-            pt_svr_b64 = None
+            pt_svr_bytes = None
             if hmap is not None and r.plane is not None and len(sampled_pts) > 0:
                 diff = sampled_pts - r.plane.centroid
                 u = np.dot(diff, r.plane.x_axis)
@@ -339,7 +322,7 @@ def _run_analysis_payload_impl(file_path_str, file_name, grid_mm, short_cutoff_m
                 orig_y = float(r.grid_origin_mm[1]) if r.grid_origin_mm is not None else 0.0
                 pt_svr = interpolate_heatmap_at_points(hmap, orig_x, orig_y, grid_mm, u, v)
                 pt_svr = np.nan_to_num(pt_svr, nan=float(r.svr_um if hasattr(r, "svr_um") else 0.0))
-                pt_svr_b64 = base64.b64encode(np.ascontiguousarray(pt_svr).tobytes()).decode("ascii")
+                pt_svr_bytes = np.ascontiguousarray(pt_svr, dtype=np.float32).tobytes()
 
             elev_g = r.elevation_grid if hasattr(r, "elevation_grid") and r.elevation_grid is not None else r.grid
             gz = elev_g * 1000.0 if elev_g is not None else None
@@ -348,10 +331,11 @@ def _run_analysis_payload_impl(file_path_str, file_name, grid_mm, short_cutoff_m
             # Invalid/edge points belonging to this face
             inv_pts = p.invalid_points if hasattr(p, "invalid_points") and p.invalid_points is not None else np.zeros((0, 3))
             inv_local_pts = []
+            inv_pts_bytes = None
             if len(inv_pts) > 0:
                 stride_inv = max(1, len(inv_pts) // 300000)
                 raw_inv_f32 = np.ascontiguousarray(inv_pts[::stride_inv], dtype=np.float32)
-                inv_b64 = base64.b64encode(raw_inv_f32.tobytes()).decode("ascii")
+                inv_pts_bytes = raw_inv_f32.tobytes()
                 inv_sample_pts = np.round(inv_pts, 2).tolist()
                 if r.plane is not None:
                     diff_inv = inv_pts - r.plane.centroid
@@ -360,8 +344,13 @@ def _run_analysis_payload_impl(file_path_str, file_name, grid_mm, short_cutoff_m
                     z_inv = np.dot(diff_inv, r.plane.normal)
                     inv_local_pts = np.round(np.column_stack((u_inv, v_inv, z_inv)), 3).tolist()
             else:
-                inv_b64 = None
                 inv_sample_pts = []
+
+            patch_binaries.append({
+                "sample_points": raw_f32.tobytes(),
+                "sample_svr": pt_svr_bytes,
+                "invalid_points": inv_pts_bytes,
+            })
 
             patches_data.append({
                 "patch_id": p.patch_id,
@@ -381,11 +370,8 @@ def _run_analysis_payload_impl(file_path_str, file_name, grid_mm, short_cutoff_m
                 "grid_svr": grid_svr_patch,
                 "grid_z": grid_z,
                 "grid_z_pitch_mm": float(grid_mm),
-                "sample_points_b64": sample_b64,
                 "sample_points_count": len(raw_f32),
                 "sample_points_3d": sample_pts,
-                "sample_svr_b64": pt_svr_b64,
-                "invalid_points_b64": inv_b64,
                 "invalid_points_3d": inv_sample_pts,
                 "invalid_points_local": inv_local_pts,
                 "grid_width": int(r.grid.shape[1]) if r.grid is not None else 0,
@@ -403,15 +389,21 @@ def _run_analysis_payload_impl(file_path_str, file_name, grid_mm, short_cutoff_m
         report_str = obj_res.format_report()
 
         unassigned_pts = obj_res.unassigned_points_arr if (hasattr(obj_res, "unassigned_points_arr") and obj_res.unassigned_points_arr is not None) else None
+        unassigned_pts_bytes = None
         if unassigned_pts is not None and len(unassigned_pts) > 0:
             stride_u = max(1, len(unassigned_pts) // 300000)
             raw_u_f32 = np.ascontiguousarray(unassigned_pts[::stride_u], dtype=np.float32)
-            unassigned_b64 = base64.b64encode(raw_u_f32.tobytes()).decode("ascii")
+            unassigned_pts_bytes = raw_u_f32.tobytes()
             stride_light_u = max(1, len(unassigned_pts) // 3000)
             unassigned_sample_pts = np.round(unassigned_pts[::stride_light_u], 2).tolist()
         else:
-            unassigned_b64 = None
             unassigned_sample_pts = []
+
+        _last_binary_payload = {
+            "is_3d": True,
+            "unassigned_points": unassigned_pts_bytes,
+            "patches": patch_binaries,
+        }
 
         out = {
             "effective_name": eff_name,
@@ -424,7 +416,6 @@ def _run_analysis_payload_impl(file_path_str, file_name, grid_mm, short_cutoff_m
             "total_points": obj_res.total_points,
             "assigned_points": obj_res.assigned_points,
             "unassigned_points": obj_res.unassigned_points,
-            "unassigned_points_b64": unassigned_b64,
             "unassigned_points_3d": unassigned_sample_pts,
             "patches": patches_data,
             "sa_um": dominant_data["sa_um"],
@@ -500,6 +491,26 @@ def run_analysis_payload(file_path_str, file_name, grid_mm, short_cutoff_mm, lon
   return pyodideInitPromise
 }
 
+function toTransferableFloat32 (u8, transferList) {
+  if (!u8 || !(u8 instanceof Uint8Array) || u8.byteLength === 0) {
+    return null
+  }
+  if (u8.byteLength % 4 !== 0) {
+    console.warn('Buffer byteLength is not a multiple of 4:', u8.byteLength)
+    return null
+  }
+  let ab
+  if (u8.byteOffset === 0 && u8.byteLength === u8.buffer.byteLength) {
+    ab = u8.buffer
+  } else {
+    ab = u8.buffer.slice(u8.byteOffset, u8.byteOffset + u8.byteLength)
+  }
+  if (transferList && ab && !transferList.includes(ab)) {
+    transferList.push(ab)
+  }
+  return new Float32Array(ab)
+}
+
 let currentWorkerJobId = 0
 
 self.onmessage = async function (e) {
@@ -557,7 +568,53 @@ run_analysis_payload(_file_path, _file_name, _grid_mm, _short_cutoff_mm, _long_c
         })
         return
       }
-      postMessage({ type: 'result', data: result, analysisId: analysisId })
+
+      const transferList = []
+      let binPayload = null
+      const pyBinProxy = pyodide.globals.get('_last_binary_payload')
+      if (pyBinProxy) {
+        try {
+          binPayload = pyBinProxy.toJs({ dict_converter: Object.fromEntries })
+        } catch (err) {
+          console.warn('Failed to convert _last_binary_payload to JS:', err)
+        } finally {
+          pyBinProxy.destroy()
+        }
+      }
+      pyodide.runPython('_last_binary_payload = None')
+
+      if (binPayload) {
+        const is3D = binPayload.is_3d || result.is_3d
+        if (is3D && result.patches && Array.isArray(result.patches)) {
+          const binPatches = binPayload.patches || []
+          result.patches.forEach((p, idx) => {
+            const bp = binPatches[idx]
+            if (bp) {
+              if (bp.sample_points) {
+                p.sample_points = toTransferableFloat32(bp.sample_points, transferList)
+              }
+              if (bp.sample_svr) {
+                p.sample_svr = toTransferableFloat32(bp.sample_svr, transferList)
+              }
+              if (bp.invalid_points) {
+                p.invalid_points = toTransferableFloat32(bp.invalid_points, transferList)
+              }
+            }
+          })
+          if (binPayload.unassigned_points) {
+            result.unassigned_points_f32 = toTransferableFloat32(binPayload.unassigned_points, transferList)
+          }
+        } else {
+          if (binPayload.sample_points) {
+            result.sample_points = toTransferableFloat32(binPayload.sample_points, transferList)
+          }
+          if (binPayload.sample_svr) {
+            result.sample_svr = toTransferableFloat32(binPayload.sample_svr, transferList)
+          }
+        }
+      }
+
+      postMessage({ type: 'result', data: result, analysisId: analysisId }, transferList)
     } catch (err) {
       if (thisJobId === currentWorkerJobId) {
         let cleanErr = err.message || err.toString()

@@ -48,6 +48,8 @@ class PointCloudViewer {
     // Face centroids and metadata for picking
     this.facesMeta = []
     this.totalPoints = 0
+    this.contextLost = false
+    this.lastResult = null
 
     this.initGL()
     this.initEvents()
@@ -192,18 +194,10 @@ class PointCloudViewer {
     return shader
   }
 
-  decodeBase64Float32 (b64) {
-    const bin = atob(b64)
-    const len = bin.length
-    const bytes = new Uint8Array(len)
-    for (let i = 0; i < len; i++) {
-      bytes[i] = bin.charCodeAt(i)
-    }
-    return new Float32Array(bytes.buffer, bytes.byteOffset, bytes.length / 4)
-  }
-
   setData (result) {
-    if (!this.gl || !result) return
+    if (!result) return
+    this.lastResult = result
+    if (!this.gl || this.contextLost) return
     const gl = this.gl
 
     const FACE_PALETTE_RGB = [
@@ -225,10 +219,8 @@ class PointCloudViewer {
 
     if (result.is_3d && result.patches && result.patches.length > 0) {
       result.patches.forEach((patch, idx) => {
-        let f32 = null
-        if (patch.sample_points_b64) {
-          f32 = this.decodeBase64Float32(patch.sample_points_b64)
-        } else if (patch.sample_points_3d && patch.sample_points_3d.length > 0) {
+        let f32 = patch.sample_points || patch.sample_points_f32 || null
+        if (!f32 && patch.sample_points_3d && patch.sample_points_3d.length > 0) {
           const pts = patch.sample_points_3d
           f32 = new Float32Array(pts.length * 3)
           for (let i = 0; i < pts.length; i++) {
@@ -251,10 +243,9 @@ class PointCloudViewer {
           patches[i] = idx
         }
 
-        let svrs = null
+        let svrs = patch.sample_svr || patch.sample_svr_f32 || null
         let minS = Infinity, maxS = -Infinity
-        if (patch.sample_svr_b64) {
-          svrs = this.decodeBase64Float32(patch.sample_svr_b64)
+        if (svrs) {
           for (let i = 0; i < svrs.length; i++) {
             if (svrs[i] > 0) {
               if (svrs[i] < minS) minS = svrs[i]
@@ -276,10 +267,8 @@ class PointCloudViewer {
         allSvr.push(svrs)
 
         // Invalid / peeled edge points belonging specifically to this face
-        let invF32 = null
-        if (patch.invalid_points_b64) {
-          invF32 = this.decodeBase64Float32(patch.invalid_points_b64)
-        } else if (patch.invalid_points_3d && patch.invalid_points_3d.length > 0) {
+        let invF32 = patch.invalid_points || patch.invalid_points_f32 || null
+        if (!invF32 && patch.invalid_points_3d && patch.invalid_points_3d.length > 0) {
           const invPts = patch.invalid_points_3d
           invF32 = new Float32Array(invPts.length * 3)
           for (let i = 0; i < invPts.length; i++) {
@@ -336,10 +325,8 @@ class PointCloudViewer {
       this.globalMaxSvr = isFinite(globalMax) ? globalMax : 100.0
 
       // Unassigned / unprocessed points (edges, chamfers, unsegmented geometry) colored neutral grey
-      let uF32 = null
-      if (result.unassigned_points_b64) {
-        uF32 = this.decodeBase64Float32(result.unassigned_points_b64)
-      } else if (result.unassigned_points_3d && result.unassigned_points_3d.length > 0) {
+      let uF32 = result.unassigned_points_f32 || (result.unassigned_points instanceof Float32Array ? result.unassigned_points : null)
+      if (!uF32 && result.unassigned_points_3d && result.unassigned_points_3d.length > 0) {
         const uPts = result.unassigned_points_3d
         uF32 = new Float32Array(uPts.length * 3)
         for (let i = 0; i < uPts.length; i++) {
@@ -367,10 +354,8 @@ class PointCloudViewer {
       }
     } else {
       // Planar surface scan
-      let f32 = null
-      if (result.sample_points_b64) {
-        f32 = this.decodeBase64Float32(result.sample_points_b64)
-      } else if (result.sample_points_3d && result.sample_points_3d.length > 0) {
+      let f32 = result.sample_points || result.sample_points_f32 || null
+      if (!f32 && result.sample_points_3d && result.sample_points_3d.length > 0) {
         const pts = result.sample_points_3d
         f32 = new Float32Array(pts.length * 3)
         for (let i = 0; i < pts.length; i++) {
@@ -384,11 +369,10 @@ class PointCloudViewer {
         const ptCount = f32.length / 3
         const colors = new Float32Array(ptCount * 3)
         const patches = new Float32Array(ptCount)
-        let svrs = null
+        let svrs = result.sample_svr || result.sample_svr_f32 || null
         let minS = Infinity, maxS = -Infinity
 
-        if (result.sample_svr_b64) {
-          svrs = this.decodeBase64Float32(result.sample_svr_b64)
+        if (svrs) {
           for (let i = 0; i < svrs.length; i++) {
             if (svrs[i] > 0) {
               if (svrs[i] < minS) minS = svrs[i]
@@ -728,6 +712,19 @@ class PointCloudViewer {
     this.requestRender()
   }
 
+  getSvrRange () {
+    let svrMin = 0.0, svrMax = 100.0
+    if (this.activePatchIndex >= 0 && this.facesMeta && this.facesMeta[this.activePatchIndex]) {
+      const meta = this.facesMeta[this.activePatchIndex]
+      svrMin = meta.minSvr || 0.0
+      svrMax = meta.maxSvr || 100.0
+    } else {
+      svrMin = isFinite(this.globalMinSvr) ? this.globalMinSvr : 0.0
+      svrMax = isFinite(this.globalMaxSvr) ? this.globalMaxSvr : 100.0
+    }
+    return { min: svrMin, max: svrMax }
+  }
+
   initEvents () {
     const canvas = this.canvas
     let isDragging = false
@@ -736,6 +733,34 @@ class PointCloudViewer {
     let lastX = 0, lastY = 0
 
     canvas.addEventListener('contextmenu', e => e.preventDefault())
+
+    // WebGL Context Loss & Recovery handlers
+    canvas.addEventListener('webglcontextlost', e => {
+      e.preventDefault()
+      this.contextLost = true
+      if (this.animating) {
+        cancelAnimationFrame(this.animating)
+        this.animating = null
+      }
+      console.warn('WebGL context lost. Rendering paused.')
+    })
+
+    canvas.addEventListener('webglcontextrestored', () => {
+      console.info('WebGL context restored. Reinitializing pipeline...')
+      this.contextLost = false
+      this.gl = this.canvas.getContext('webgl', {
+        preserveDrawingBuffer: false,
+        antialias: true,
+        depth: true,
+        alpha: false
+      })
+      if (!this.gl) return
+      this.initGL()
+      if (this.lastResult) {
+        this.setData(this.lastResult)
+      }
+      this.render()
+    })
 
     // High-performance pointer events with subpixel precision
     canvas.addEventListener('pointerdown', e => {
@@ -887,7 +912,7 @@ class PointCloudViewer {
   }
 
   render () {
-    if (!this.gl || !this.program || this.totalPoints === 0) return
+    if (this.contextLost || !this.gl || !this.program || this.totalPoints === 0) return
     const gl = this.gl
 
     const bg = this.isDark

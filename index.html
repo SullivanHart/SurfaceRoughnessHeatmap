@@ -24,7 +24,7 @@
 
         <!-- 1. Data Acquisition / Upload -->
         <div class="upload">
-          <div class="dropzone" id="dropzone">
+          <div class="dropzone" id="dropzone" role="button" tabindex="0" aria-label="Load 3D surface scan file">
             <div class="dropzone-file-info">
               <div class="dropzone-text" id="dropzone-text">Load 3D Surface Scan</div>
               <div class="dropzone-hint" id="dropzone-hint">PLY, PCD, STL, OBJ, CSV, XYZ</div>
@@ -100,9 +100,9 @@
               <input type="range" id="point-size-slider" min="0" max="2" step="1" value="1" class="form-range" aria-label="Point Size (.25 - .5 - 1)" />
             </div>
             <div id="point-size-stops" style="display: flex; justify-content: space-between; font-size: 0.68rem; color: var(--text-muted); font-family: var(--font-mono); padding: 0 2px;">
-              <span class="point-size-stop" data-idx="0" style="cursor: pointer; padding: 2px 6px; user-select: none;">0.25</span>
-              <span class="point-size-stop active" data-idx="1" style="cursor: pointer; padding: 2px 6px; user-select: none;">0.5</span>
-              <span class="point-size-stop" data-idx="2" style="cursor: pointer; padding: 2px 6px; user-select: none;">1.0</span>
+              <span class="point-size-stop" data-idx="0" role="button" tabindex="0" aria-label="Point size 0.25 mm" style="cursor: pointer; padding: 2px 6px; user-select: none;">0.25</span>
+              <span class="point-size-stop active" data-idx="1" role="button" tabindex="0" aria-label="Point size 0.5 mm" style="cursor: pointer; padding: 2px 6px; user-select: none;">0.5</span>
+              <span class="point-size-stop" data-idx="2" role="button" tabindex="0" aria-label="Point size 1.0 mm" style="cursor: pointer; padding: 2px 6px; user-select: none;">1.0</span>
             </div>
           </div>
           <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.4rem;">
@@ -190,8 +190,23 @@
                 <div class="loading-label" id="chart-loading-text">Rendering Face Topography...</div>
               </div>
               <!-- Canvas and Plot Containers -->
-              <div id="chart-container"></div>
-              <canvas id="pointcloud-canvas" style="display: none;"></canvas>
+              <div id="chart-container" aria-label="3D surface topography chart"></div>
+              <canvas id="pointcloud-canvas" aria-label="3D whole-part point cloud viewport" style="display: none;"></canvas>
+
+              <!-- All View S_VR Colorbar / Legend Overlay -->
+              <div id="all-view-colorbar" class="all-view-colorbar" style="display: none;">
+                <div class="colorbar-title" id="all-colorbar-title">S<sub>VR</sub> (µm)</div>
+                <div class="colorbar-content">
+                  <div class="colorbar-strip viridis" id="all-colorbar-strip"></div>
+                  <div class="colorbar-ticks" id="all-colorbar-ticks">
+                    <span class="colorbar-tick" id="all-tick-4">-</span>
+                    <span class="colorbar-tick" id="all-tick-3">-</span>
+                    <span class="colorbar-tick" id="all-tick-2">-</span>
+                    <span class="colorbar-tick" id="all-tick-1">-</span>
+                    <span class="colorbar-tick" id="all-tick-0">-</span>
+                  </div>
+                </div>
+              </div>
             </div>
 
             <!-- Right: Results Panel -->
@@ -203,7 +218,7 @@
 
               <!-- 3D Part Orientation Thumbnail (Visible during Face Inspection) -->
               <div class="shape-mini-preview" id="shape-mini-preview" style="display: none;" title="Click to view in 3D scan">
-                <canvas id="mini-preview-canvas" width="200" height="90"></canvas>
+                <canvas id="mini-preview-canvas" width="200" height="90" aria-label="3D part orientation preview"></canvas>
               </div>
 
               <div class="sec-metric">

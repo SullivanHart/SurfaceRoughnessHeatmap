@@ -888,7 +888,9 @@ function updateActiveChart () {
       }
       pointCloudViewer.resize()
     }
+    updateAllViewColorbar()
   } else {
+    updateAllViewColorbar()
     const kpiCardElem = document.getElementById('kpi-card')
     const chartCardElem = document.querySelector('.chart-card')
     const targetHeight = Math.max(
@@ -1422,6 +1424,85 @@ function render3DObject (res) {
     pointCloudViewer.setPalette(paletteSelect.value)
   }
   pointCloudViewer.render()
+  updateAllViewColorbar()
+}
+
+function updateAllViewColorbar () {
+  const colorbarEl = document.getElementById('all-view-colorbar')
+  if (!colorbarEl) return
+
+  // Only display in whole 3D object / overview view when heatmap is active
+  const showHeatmap = showHeatmapCheckbox ? showHeatmapCheckbox.checked : true
+  if (currentViewMode !== '3d-object' || !showHeatmap || !currentResult) {
+    colorbarEl.style.display = 'none'
+    return
+  }
+
+  colorbarEl.style.display = 'flex'
+
+  const unit = unitSelect ? unitSelect.value : 'µm'
+  const titleEl = document.getElementById('all-colorbar-title')
+  if (titleEl) {
+    titleEl.innerHTML = `S<sub>VR</sub> (${unit})`
+  }
+
+  // Update colormap gradient strip according to palette selection
+  const stripEl = document.getElementById('all-colorbar-strip')
+  const palette = paletteSelect ? paletteSelect.value : 'Viridis'
+  if (stripEl) {
+    if (palette.toLowerCase() === 'jet') {
+      stripEl.classList.remove('viridis')
+      stripEl.classList.add('jet')
+    } else {
+      stripEl.classList.remove('jet')
+      stripEl.classList.add('viridis')
+    }
+  }
+
+  // Get S_VR range (in µm) from PointCloudViewer or currentResult
+  let svrMin = 0.0
+  let svrMax = 100.0
+  if (pointCloudViewer && typeof pointCloudViewer.getSvrRange === 'function') {
+    const range = pointCloudViewer.getSvrRange()
+    if (range && isFinite(range.min) && isFinite(range.max)) {
+      svrMin = range.min
+      svrMax = range.max
+    }
+  } else if (currentResult) {
+    if (typeof currentResult.best_svr_um === 'number' && typeof currentResult.worst_svr_um === 'number' && currentResult.worst_svr_um > currentResult.best_svr_um) {
+      svrMin = currentResult.best_svr_um
+      svrMax = currentResult.worst_svr_um
+    } else if (typeof currentResult.min_svr_um === 'number' && typeof currentResult.max_svr_um === 'number') {
+      svrMin = currentResult.min_svr_um
+      svrMax = currentResult.max_svr_um
+    } else if (typeof currentResult.svr_um === 'number') {
+      svrMin = currentResult.svr_um * 0.5
+      svrMax = currentResult.svr_um * 1.5
+    }
+  }
+
+  if (svrMax <= svrMin) {
+    svrMax = svrMin + 1.0
+  }
+
+  const formatUnitVal = valUm => {
+    if (unit === 'mm') return (valUm / 1000.0).toFixed(3)
+    if (unit === 'in') return (valUm / 25400.0).toFixed(4)
+    return valUm.toFixed(1)
+  }
+
+  const span = svrMax - svrMin
+  const t4 = document.getElementById('all-tick-4')
+  const t3 = document.getElementById('all-tick-3')
+  const t2 = document.getElementById('all-tick-2')
+  const t1 = document.getElementById('all-tick-1')
+  const t0 = document.getElementById('all-tick-0')
+
+  if (t4) t4.textContent = formatUnitVal(svrMax)
+  if (t3) t3.textContent = formatUnitVal(svrMin + span * 0.75)
+  if (t2) t2.textContent = formatUnitVal(svrMin + span * 0.50)
+  if (t1) t1.textContent = formatUnitVal(svrMin + span * 0.25)
+  if (t0) t0.textContent = formatUnitVal(svrMin)
 }
 
 if (showHeatmapCheckbox) {
@@ -1433,6 +1514,7 @@ if (showHeatmapCheckbox) {
     if (currentResult && currentViewMode !== '3d-object') {
       updateActiveChart()
     }
+    updateAllViewColorbar()
   })
 }
 
@@ -1705,6 +1787,13 @@ dropzone.addEventListener('click', () => {
   fileInput.value = ''
   fileInput.click()
 })
+dropzone.addEventListener('keydown', e => {
+  if (e.key === 'Enter' || e.key === ' ') {
+    e.preventDefault()
+    fileInput.value = ''
+    fileInput.click()
+  }
+})
 if (dropzoneReplaceBtn) {
   dropzoneReplaceBtn.addEventListener('click', e => {
     e.stopPropagation()
@@ -1762,6 +1851,7 @@ dropzone.addEventListener('drop', e => {
 // Unit or visualization switch updates instantly
 unitSelect.addEventListener('change', () => {
   if (currentResult) renderResults(currentResult)
+  updateAllViewColorbar()
 })
 paletteSelect.addEventListener('change', () => {
   if (pointCloudViewer && pointCloudViewer.setPalette) {
@@ -1770,6 +1860,7 @@ paletteSelect.addEventListener('change', () => {
   if (currentResult) {
     updateActiveChart()
   }
+  updateAllViewColorbar()
 })
 robustCheckbox.addEventListener('change', () => {
   if (currentResult) {
@@ -1857,13 +1948,21 @@ if (pointSizeWrapper) {
   })
 }
 
-// Click directly on .25, .5, 1.0 text labels
+// Click or press Enter/Space directly on .25, .5, 1.0 text labels
 document.querySelectorAll('.point-size-stop').forEach(stopEl => {
   stopEl.addEventListener('click', e => {
     e.preventDefault()
     e.stopPropagation()
     const idx = parseInt(stopEl.getAttribute('data-idx'), 10)
     setDiscretePointSize(idx)
+  })
+  stopEl.addEventListener('keydown', e => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault()
+      e.stopPropagation()
+      const idx = parseInt(stopEl.getAttribute('data-idx'), 10)
+      setDiscretePointSize(idx)
+    }
   })
 })
 
