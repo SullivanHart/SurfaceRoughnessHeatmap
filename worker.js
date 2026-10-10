@@ -176,6 +176,7 @@ def _run_analysis_payload_impl(file_path_str, file_name, grid_mm, short_cutoff_m
             long_cutoff_mm=long_cutoff_mm,
             variogram_points=10,
             variogram_span_mm=0.5,
+            gaussian_mesh=gaussian_mesh,
         )
         t_analyze = time.perf_counter()
 
@@ -455,19 +456,20 @@ def run_analysis_payload(file_path_str, file_name, grid_mm, short_cutoff_mm, lon
         return _run_analysis_payload_impl(file_path_str, file_name, grid_mm, short_cutoff_mm, long_cutoff_mm, gaussian_mesh)
     except (ValueError, RuntimeError) as exc:
         msg = str(exc)
-        sugg = None
-        import re
-        m = re.search(r"--grid-mm\s+([0-9]+(?:\.[0-9]+)?)", msg)
-        if m:
-            try:
-                sugg = float(m.group(1))
-            except ValueError:
-                pass
+        sugg = getattr(exc, "suggested_pitch", None)
+        if sugg is None:
+            import re
+            m = re.search(r"--grid-mm\s+([0-9]+(?:\.[0-9]+)?)", msg)
+            if m:
+                try:
+                    sugg = float(m.group(1))
+                except ValueError:
+                    pass
         return json.dumps({
             "error": msg,
             "error_type": type(exc).__name__,
             "suggested_pitch": sugg,
-            "is_density_sparsity": bool("contiguous surface area" in msg or "point spacing" in msg or "coarser than" in msg)
+            "is_density_sparsity": bool(sugg is not None or "contiguous surface area" in msg or "point spacing" in msg or "coarser than" in msg)
         })
     except Exception as exc:
         return json.dumps({
