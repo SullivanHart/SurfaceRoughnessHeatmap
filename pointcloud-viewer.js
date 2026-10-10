@@ -9,12 +9,13 @@ class PointCloudViewer {
         antialias: true,
         depth: true,
         alpha: false,
-        preserveDrawingBuffer: false
+        preserveDrawingBuffer: true
       }) ||
       canvas.getContext('experimental-webgl', {
         antialias: true,
         depth: true,
-        alpha: false
+        alpha: false,
+        preserveDrawingBuffer: true
       })
 
     if (!this.gl) {
@@ -23,6 +24,7 @@ class PointCloudViewer {
     }
 
     this.onFaceClick = options.onFaceClick || null
+    this.onCameraUserInteraction = options.onCameraUserInteraction || null
     this.isDark = true
     this.pointSize = 0.5
     this.activePatchIndex = 0
@@ -71,7 +73,7 @@ class PointCloudViewer {
       uniform float uShowHeatmap;
       uniform float uSvrMin;
       uniform float uSvrMax;
-      uniform float uColormapType; // 0 = Viridis, 1 = Jet
+      uniform float uColormapType; // 0 = Viridis, 1 = Jet, 2 = Plasma, 3 = Inferno
 
       varying vec3 vColor;
 
@@ -95,6 +97,30 @@ class PointCloudViewer {
         return vec3(r, g, b);
       }
 
+      vec3 plasmaColormap(float t) {
+        t = clamp(t, 0.0, 1.0);
+        const vec3 c0 = vec3(0.058, 0.031, 0.529);
+        const vec3 c1 = vec3(0.793, 0.043, 0.827);
+        const vec3 c2 = vec3(0.976, 0.431, 0.286);
+        const vec3 c3 = vec3(0.941, 0.976, 0.129);
+        if (t < 0.33) return mix(c0, c1, t / 0.33);
+        if (t < 0.66) return mix(c1, c2, (t - 0.33) / 0.33);
+        return mix(c2, c3, (t - 0.66) / 0.34);
+      }
+
+      vec3 infernoColormap(float t) {
+        t = clamp(t, 0.0, 1.0);
+        const vec3 c0 = vec3(0.001, 0.001, 0.016);
+        const vec3 c1 = vec3(0.341, 0.063, 0.424);
+        const vec3 c2 = vec3(0.737, 0.216, 0.329);
+        const vec3 c3 = vec3(0.969, 0.612, 0.071);
+        const vec3 c4 = vec3(0.988, 1.0, 0.643);
+        if (t < 0.25) return mix(c0, c1, t / 0.25);
+        if (t < 0.50) return mix(c1, c2, (t - 0.25) / 0.25);
+        if (t < 0.75) return mix(c2, c3, (t - 0.50) / 0.25);
+        return mix(c3, c4, (t - 0.75) / 0.25);
+      }
+
       void main() {
         bool isInvalidOfActive = (aPatchIndex < -9.5 && (abs(aPatchIndex + 10.0 + uActivePatchIndex) < 0.1 || uActivePatchIndex < 0.0));
         bool isGlobalUnassigned = (aPatchIndex < -1.5 && aPatchIndex > -9.5);
@@ -107,20 +133,35 @@ class PointCloudViewer {
         }
 
         bool isSelf = abs(aPatchIndex - uActivePatchIndex) < 0.1;
-        bool isActive = (isSelf || isInvalidOfActive || uActivePatchIndex < 0.0);
+        bool isOverview = (uActivePatchIndex < -0.5);
 
+        vec3 baseColor;
         if (uShowHeatmap > 0.5) {
           if (aSvr > 0.0) {
             float span = max(uSvrMax - uSvrMin, 0.001);
             float normSvr = clamp((aSvr - uSvrMin) / span, 0.0, 1.0);
-            vColor = (uColormapType > 0.5) ? jetColormap(normSvr) : viridisColormap(normSvr);
+            if (uColormapType > 2.5) {
+              baseColor = infernoColormap(normSvr);
+            } else if (uColormapType > 1.5) {
+              baseColor = plasmaColormap(normSvr);
+            } else if (uColormapType > 0.5) {
+              baseColor = jetColormap(normSvr);
+            } else {
+              baseColor = viridisColormap(normSvr);
+            }
           } else {
-            // Neutral grey for edge/unassigned/invalid points - face colors are strictly hidden!
-            vColor = vec3(0.65, 0.68, 0.74);
+            // Neutral grey for edge/unassigned/invalid points
+            baseColor = vec3(0.55, 0.58, 0.65);
           }
         } else {
-          // Heatmap is hidden: show designated face colors
-          vColor = aColor;
+          baseColor = aColor;
+        }
+
+        // When a specific face is selected, subtly de-emphasize other faces
+        if (!isOverview && !isSelf && !isInvalidOfActive) {
+          vColor = mix(baseColor, vec3(0.35, 0.38, 0.44), 0.65);
+        } else {
+          vColor = baseColor;
         }
 
         gl_Position = uMVP * vec4(aPosition, 1.0);
@@ -656,6 +697,7 @@ class PointCloudViewer {
   }
 
   resetCamera () {
+    if (this.onCameraUserInteraction) this.onCameraUserInteraction()
     if (this.bounds) {
       this.target = [
         (this.bounds.minX + this.bounds.maxX) * 0.5,
@@ -749,7 +791,7 @@ class PointCloudViewer {
       console.info('WebGL context restored. Reinitializing pipeline...')
       this.contextLost = false
       this.gl = this.canvas.getContext('webgl', {
-        preserveDrawingBuffer: false,
+        preserveDrawingBuffer: true,
         antialias: true,
         depth: true,
         alpha: false
@@ -762,7 +804,10 @@ class PointCloudViewer {
       this.render()
     })
 
-    // High-performance pointer events with subpixel precision
+    let lastMoveTime = performance.now()
+    let velX = 0, velY = 0
+
+    // High-performance pointer events with subpixel precision and momentum projection
     canvas.addEventListener('pointerdown', e => {
       if (this.animating) {
         cancelAnimationFrame(this.animating)
@@ -774,6 +819,9 @@ class PointCloudViewer {
       startY = e.clientY
       lastX = e.clientX
       lastY = e.clientY
+      lastMoveTime = performance.now()
+      velX = 0
+      velY = 0
       canvas.style.cursor = 'grabbing'
       try {
         canvas.setPointerCapture(e.pointerId)
@@ -782,8 +830,14 @@ class PointCloudViewer {
 
     canvas.addEventListener('pointermove', e => {
       if (!isDragging) return
+      const now = performance.now()
+      const dt = Math.max(1, now - lastMoveTime)
+      lastMoveTime = now
+
       const dx = e.clientX - lastX
       const dy = e.clientY - lastY
+      velX = dx / dt
+      velY = dy / dt
       lastX = e.clientX
       lastY = e.clientY
 
@@ -810,6 +864,10 @@ class PointCloudViewer {
         this.target[2] += (-dx * right[2] + dy * camUp[2]) * panFactor
       }
 
+      if (Math.hypot(e.clientX - startX, e.clientY - startY) > 4) {
+        if (this.onCameraUserInteraction) this.onCameraUserInteraction()
+      }
+
       this.startDampingLoop()
     })
 
@@ -824,6 +882,21 @@ class PointCloudViewer {
       const dist = Math.hypot(e.clientX - startX, e.clientY - startY)
       if (dist < 4 && this.onFaceClick && this.facesMeta.length > 1) {
         this.handleClick(e)
+      } else if (dist >= 4) {
+        if (this.onCameraUserInteraction) this.onCameraUserInteraction()
+        if (dragMode === 0) {
+          // Momentum velocity handoff with critical damping decay
+          const speed = Math.hypot(velX, velY)
+          if (speed > 0.08) {
+            const clampedSpeed = Math.min(speed, 2.0)
+            const ratio = clampedSpeed / speed
+            const projDx = velX * ratio * 45.0 * 0.005
+            const projDy = velY * ratio * 45.0 * 0.005
+            this.targetTheta -= projDx
+            this.targetPhi = Math.max(0.01, Math.min(Math.PI - 0.01, this.targetPhi - projDy))
+            this.startDampingLoop()
+          }
+        }
       }
     }
 
@@ -833,6 +906,7 @@ class PointCloudViewer {
     // Smooth wheel zoom with delta clamping and inertia damping
     canvas.addEventListener('wheel', e => {
       e.preventDefault()
+      if (this.onCameraUserInteraction) this.onCameraUserInteraction()
       if (this.animating) {
         cancelAnimationFrame(this.animating)
         this.animating = null
@@ -868,10 +942,18 @@ class PointCloudViewer {
 
     this.facesMeta.forEach((meta, idx) => {
       const c = meta.centroid
+      // Back-face check: if normal points away from camera eye, skip
+      if (meta.normal && this.lastEye) {
+        const toEyeX = this.lastEye[0] - c[0]
+        const toEyeY = this.lastEye[1] - c[1]
+        const toEyeZ = this.lastEye[2] - c[2]
+        const dot = meta.normal[0] * toEyeX + meta.normal[1] * toEyeY + meta.normal[2] * toEyeZ
+        if (dot < 0) return
+      }
       const v = this.project(c, this.lastMVP, w, h)
       if (v && v.z > 0 && v.z < 1) {
         const d = Math.hypot(v.x - mouseX, v.y - mouseY)
-        if (d < bestDist && d < 90) {
+        if (d < bestDist && d < 120) {
           bestDist = d
           bestIdx = idx
         }
@@ -900,24 +982,32 @@ class PointCloudViewer {
   resize () {
     const canvas = this.canvas
     const dpr = Math.min(2.0, window.devicePixelRatio || 1)
-    const w = Math.floor((canvas.clientWidth || 800) * dpr)
-    const h = Math.floor((canvas.clientHeight || 500) * dpr)
+    const cw = canvas.clientWidth || (canvas.parentElement ? canvas.parentElement.clientWidth : 0) || 800
+    const ch = canvas.clientHeight || (canvas.parentElement ? canvas.parentElement.clientHeight : 0) || 500
+    const w = Math.floor(cw * dpr)
+    const h = Math.floor(ch * dpr)
 
-    if (canvas.width !== w || canvas.height !== h) {
+    if (w > 0 && h > 0 && (canvas.width !== w || canvas.height !== h)) {
       canvas.width = w
       canvas.height = h
       if (this.gl) this.gl.viewport(0, 0, w, h)
       this.requestRender()
+      return true
     }
+    return false
   }
 
   render () {
     if (this.contextLost || !this.gl || !this.program || this.totalPoints === 0) return
+    this.resize()
     const gl = this.gl
+    if (this.canvas.width <= 0 || this.canvas.height <= 0) return
+
+    gl.viewport(0, 0, this.canvas.width, this.canvas.height)
 
     const bg = this.isDark
-      ? [28 / 255, 29 / 255, 34 / 255, 1.0]
-      : [1.0, 1.0, 1.0, 1.0]
+      ? [20 / 255, 21 / 255, 26 / 255, 1.0]
+      : [0.96, 0.96, 0.97, 1.0]
 
     gl.clearColor(bg[0], bg[1], bg[2], bg[3])
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
@@ -936,6 +1026,7 @@ class PointCloudViewer {
       center[1] + this.distance * sinPhi * sinTheta,
       center[2] + this.distance * cosPhi
     ]
+    this.lastEye = eye
 
     const aspect = this.canvas.width / Math.max(1, this.canvas.height)
     const near = Math.max(0.1, this.distance * 0.05)
@@ -948,13 +1039,13 @@ class PointCloudViewer {
 
     gl.uniformMatrix4fv(this.uniforms.mvp, false, mvpMat)
     const dpr = Math.min(2.0, window.devicePixelRatio || 1)
-    let pointPx = 2.0 * dpr
+    let pointPx = 3.0 * dpr
     if (this.pointSize <= 0.3) {
-      pointPx = 1.0 * dpr
-    } else if (this.pointSize <= 0.6) {
       pointPx = 2.0 * dpr
+    } else if (this.pointSize <= 0.6) {
+      pointPx = 3.5 * dpr
     } else {
-      pointPx = 4.0 * dpr
+      pointPx = 5.5 * dpr
     }
     gl.uniform1f(this.uniforms.pointSize, pointPx)
     gl.uniform1f(this.uniforms.activePatchIndex, this.activePatchIndex)
@@ -1054,8 +1145,22 @@ class PointCloudViewer {
 
   setPalette (paletteName) {
     this.paletteName = paletteName || 'Jet'
-    this.colormapType = (this.paletteName.toLowerCase() === 'viridis') ? 0.0 : 1.0
+    const lower = this.paletteName.toLowerCase()
+    if (lower === 'viridis') {
+      this.colormapType = 0.0
+    } else if (lower === 'plasma') {
+      this.colormapType = 2.0
+    } else if (lower === 'inferno') {
+      this.colormapType = 3.0
+    } else {
+      this.colormapType = 1.0 // Jet / Rainbow
+    }
     this.render()
+  }
+
+  getScreenshotDataURL () {
+    this.render()
+    return this.canvas.toDataURL('image/png')
   }
 
   multiply (a, b) {

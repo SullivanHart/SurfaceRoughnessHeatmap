@@ -11,258 +11,397 @@
     <script src="pointcloud-viewer.js"></script>
   </head>
   <body>
-    <div class="app-container">
-      <!-- Left Sidebar: Data Acquisition & Processing Parameters -->
-      <aside class="sidebar">
-        <div class="sidebar-brand">
-          <div class="brand-dot"></div>
-          <div class="brand-text-block">
-            <span class="brand-univ">IOWA STATE UNIVERSITY</span>
-            <span class="brand-dept">IMSE &bull; HAM Lab</span>
+    <div class="workbench">
+      <!-- 1. Top Bar: Solid Professional Technical Toolbar -->
+      <header class="app-topbar">
+        <div class="topbar-left">
+          <div class="brand-badge" title="Surface Roughness Metrology Workbench">
+            <span class="brand-title">SURFINSPECT</span>
           </div>
+
         </div>
 
-        <!-- 1. Data Acquisition / Upload -->
-        <div class="upload">
-          <div class="dropzone" id="dropzone" role="button" tabindex="0" aria-label="Load 3D surface scan file">
-            <div class="dropzone-file-info">
-              <div class="dropzone-text" id="dropzone-text">Load 3D Surface Scan</div>
-              <div class="dropzone-hint" id="dropzone-hint">PLY, PCD, STL, OBJ, CSV, XYZ</div>
-            </div>
-            <button type="button" class="dropzone-replace-btn" id="dropzone-replace-btn">Change</button>
-            <input type="file" id="file-input" style="display: none;" accept=".ply,.pcd,.stl,.obj,.csv,.tsv,.xyz,.txt,.npy,.npz,.gz,.zip" />
-          </div>
-          <div class="progress-bar" id="progress-bar">
-            <div class="progress-fill" id="progress-fill"></div>
-          </div>
-          <div class="subtle-or">or</div>
-          <div class="sample-picker-subtle">
-            <select id="sample-select" class="sample-select-subtle" autocomplete="off" aria-label="Reference standard sample">
-              <option value="" selected>Select reference standard…</option>
-              <option value="SCRATA_A1.pcd">SCRATA A1 (Fine &bull; ~26 &micro;m)</option>
-              <option value="SCRATA_A2.pcd">SCRATA A2 (Medium-Fine &bull; ~45 &micro;m)</option>
-              <option value="SCRATA_A3.pcd">SCRATA A3 (Medium-Rough &bull; ~63 &micro;m)</option>
-              <option value="SCRATA_A4.pcd">SCRATA A4 (Rough &bull; ~132 &micro;m)</option>
-              <option value="SCRATA_CUBE_Mix.pcd">SCRATA 3D Cube (5 Faces &bull; Multi-Surface)</option>
-            </select>
-          </div>
+        <div class="topbar-right">
+          <!-- Ingestion Action (Occupied state displays active scan name) -->
+          <button type="button" class="btn btn-primary" id="open-scan-btn" title="Open 3D optical scan file (.ply, .pcd, .stl, .csv)">
+            <svg class="icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+            <span id="open-scan-text">Open Scan</span>
+          </button>
+          <input type="file" id="file-input" style="display: none;" accept=".ply,.pcd,.stl,.obj,.csv,.tsv,.xyz,.txt,.npy,.npz,.gz,.zip" />
+
+          <!-- Benchmark Reference Standards Dropdown -->
+          <button type="button" class="btn btn-secondary" id="benchmarks-btn" title="Load ASTM / SCRATA benchmark reference scan">
+            <svg class="icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>
+            <span>Benchmarks</span>
+            <svg class="icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+
+          <!-- Export Action -->
+          <button type="button" class="btn btn-secondary" id="export-btn" disabled title="Export report, metrics table, or viewport snapshot">
+            <svg class="icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            <span>Export</span>
+          </button>
+
+          <div class="topbar-divider"></div>
+
+          <!-- Analysis Calibration Popover Trigger -->
+          <button type="button" class="icon-btn" id="settings-toggle-btn" title="Filtration &amp; Grid Calibration" aria-label="Analysis Settings">
+            <svg class="icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+          </button>
+
+          <!-- Theme Toggle -->
+          <button id="theme-btn" class="icon-btn" type="button" aria-label="Toggle theme" title="Toggle Light / Dark Mode">
+            <svg id="theme-icon-sun" class="icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+            <svg id="theme-icon-moon" class="icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display: none;"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+          </button>
         </div>
 
-        <!-- 2. Measurement Units -->
-        <div class="form-group">
-          <label class="form-label" for="unit-select">Measurement Units</label>
-          <select id="unit-select" class="form-select">
-            <option value="µm" selected>µm (Micrometers)</option>
-            <option value="mm">mm (Millimeters)</option>
-            <option value="in">in (Inches)</option>
-          </select>
+        <!-- Integrated Progress Bar (Slim Under-Toolbar Line) -->
+        <div class="topbar-progress" id="progress-bar" style="display: none;">
+          <div class="topbar-progress-fill" id="progress-fill"></div>
         </div>
+      </header>
 
-        <!-- 3. Filtration Parameters -->
-        <details class="standards-panel" id="standards-panel">
-          <summary>Filtration &amp; Grid Parameters</summary>
-          <div class="panel-content">
-            <div class="form-group">
-              <label class="form-label" for="grid-pitch">Grid Pitch &Delta;x (mm)</label>
-              <input type="number" id="grid-pitch" class="form-input" value="0.20" step="0.05" min="0.01" />
+      <!-- Export Popover -->
+      <div id="export-popover" class="export-popover" style="display: none;">
+        <div class="popover-header">
+          <span class="popover-title">Export Inspection Data</span>
+          <button type="button" class="popover-close" id="export-close-btn" aria-label="Close export">&times;</button>
+        </div>
+        <div class="export-menu">
+          <button type="button" class="export-menu-item" id="export-report-action">
+            <div class="export-item-info">
+              <span class="export-item-title">Metrology Report</span>
+              <span class="export-item-desc">Comprehensive text report with ANSI/ISO parameters</span>
             </div>
-            <div class="form-group">
-              <label class="form-label" for="short-cutoff">Short Cutoff &lambda;s (mm)</label>
-              <input type="number" id="short-cutoff" class="form-input" value="1.0" step="0.1" min="0.0" />
+            <span class="badge badge-ext">.TXT</span>
+          </button>
+          <button type="button" class="export-menu-item" id="export-csv-action">
+            <div class="export-item-info">
+              <span class="export-item-title">Surface Metrics Table</span>
+              <span class="export-item-desc">CSV breakdown of all detected faces and roughness metrics</span>
             </div>
-            <div class="form-group">
-              <label class="form-label" for="long-cutoff">Long Cutoff &lambda;c (mm)</label>
-              <input type="number" id="long-cutoff" class="form-input" value="25.0" step="1.0" min="0.0" />
+            <span class="badge badge-ext">.CSV</span>
+          </button>
+          <button type="button" class="export-menu-item" id="export-png-action">
+            <div class="export-item-info">
+              <span class="export-item-title">Viewport Snapshot</span>
+              <span class="export-item-desc">High-resolution PNG capture of current 3D inspection</span>
             </div>
-            <div style="display: flex; align-items: center; gap: 0.5rem; margin-top: 0.25rem;">
+            <span class="badge badge-ext">.PNG</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Benchmarks Popover -->
+      <div id="benchmarks-popover" class="export-popover benchmarks-popover" style="display: none;">
+        <div class="popover-header">
+          <span class="popover-title">Reference Benchmark Scans</span>
+          <button type="button" class="popover-close" id="benchmarks-close-btn" aria-label="Close benchmarks">&times;</button>
+        </div>
+        <div class="export-menu">
+          <button type="button" class="export-menu-item benchmark-menu-item" data-sample="SCRATA_CUBE_Mix.pcd">
+            <div class="export-item-info">
+              <span class="export-item-title">3D Cube</span>
+            </div>
+          </button>
+          <button type="button" class="export-menu-item benchmark-menu-item" data-sample="SCRATA_A1.pcd">
+            <div class="export-item-info">
+              <span class="export-item-title">SCRATA A1 Comparator</span>
+              <span class="export-item-desc">Fine cast surface</span>
+            </div>
+            <span class="badge badge-ext">A1</span>
+          </button>
+          <button type="button" class="export-menu-item benchmark-menu-item" data-sample="SCRATA_A2.pcd">
+            <div class="export-item-info">
+              <span class="export-item-title">SCRATA A2 Comparator</span>
+              <span class="export-item-desc">Medium-fine cast surface</span>
+            </div>
+            <span class="badge badge-ext">A2</span>
+          </button>
+          <button type="button" class="export-menu-item benchmark-menu-item" data-sample="SCRATA_A3.pcd">
+            <div class="export-item-info">
+              <span class="export-item-title">SCRATA A3 Comparator</span>
+              <span class="export-item-desc">Medium-rough cast surface</span>
+            </div>
+            <span class="badge badge-ext">A3</span>
+          </button>
+          <button type="button" class="export-menu-item benchmark-menu-item" data-sample="SCRATA_A4.pcd">
+            <div class="export-item-info">
+              <span class="export-item-title">SCRATA A4 Comparator</span>
+              <span class="export-item-desc">Heavy rough cast surface</span>
+            </div>
+            <span class="badge badge-ext">A4</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Settings Popover -->
+      <div id="settings-popover" class="settings-popover" style="display: none;">
+        <div class="popover-header">
+          <span class="popover-title">Calibration &amp; Display</span>
+          <button type="button" class="popover-close" id="settings-close-btn" aria-label="Close settings">&times;</button>
+        </div>
+        <div class="popover-body">
+          <div class="settings-row">
+            <label class="settings-label" for="unit-select">Units</label>
+            <div class="select-wrapper">
+              <select id="unit-select" class="clean-select unit-select" aria-label="Measurement Units" autocomplete="off">
+                <option value="µm" selected>&micro;m</option>
+                <option value="mm">mm</option>
+                <option value="in">in</option>
+              </select>
+            </div>
+          </div>
+          <div class="settings-row">
+            <label class="settings-label" for="palette-select">Colormap</label>
+            <div class="select-wrapper">
+              <select id="palette-select" class="clean-select" aria-label="Colormap Palette">
+                <option value="Jet" selected>Jet</option>
+                <option value="Viridis">Viridis</option>
+                <option value="Plasma">Plasma</option>
+                <option value="Inferno">Inferno</option>
+              </select>
+            </div>
+          </div>
+          <div class="settings-divider"></div>
+          <div class="settings-row">
+            <label class="settings-label" for="grid-pitch">Grid Pitch &Delta;x (mm)</label>
+            <div class="stepper-input">
+              <button type="button" class="stepper-btn stepper-dec" data-target="grid-pitch" aria-label="Decrease">&minus;</button>
+              <input type="number" id="grid-pitch" class="clean-input" value="0.20" step="0.05" min="0.01" />
+              <button type="button" class="stepper-btn stepper-inc" data-target="grid-pitch" aria-label="Increase">+</button>
+            </div>
+          </div>
+          <div class="settings-row">
+            <label class="settings-label" for="short-cutoff">Short Cutoff &lambda;s (mm)</label>
+            <div class="stepper-input">
+              <button type="button" class="stepper-btn stepper-dec" data-target="short-cutoff" aria-label="Decrease">&minus;</button>
+              <input type="number" id="short-cutoff" class="clean-input" value="1.0" step="0.1" min="0.0" />
+              <button type="button" class="stepper-btn stepper-inc" data-target="short-cutoff" aria-label="Increase">+</button>
+            </div>
+          </div>
+          <div class="settings-row">
+            <label class="settings-label" for="long-cutoff">Long Cutoff &lambda;c (mm)</label>
+            <div class="stepper-input">
+              <button type="button" class="stepper-btn stepper-dec" data-target="long-cutoff" aria-label="Decrease">&minus;</button>
+              <input type="number" id="long-cutoff" class="clean-input" value="25.0" step="1.0" min="0.0" />
+              <button type="button" class="stepper-btn stepper-inc" data-target="long-cutoff" aria-label="Increase">+</button>
+            </div>
+          </div>
+          <div class="settings-row checkbox-row">
+            <label class="settings-checkbox-label">
               <input type="checkbox" id="gaussian-mesh" checked />
-              <label for="gaussian-mesh" class="form-label" style="font-size: 0.78rem;">Gaussian Form Removal</label>
-            </div>
-          </div>
-        </details>
-
-        <!-- 4. Heatmap Colormap & Scale -->
-        <div>
-          <div class="sidebar-title">Colormap Display</div>
-          <div class="form-group" style="margin-bottom: 0.6rem;">
-            <label class="form-label" for="palette-select">Palette</label>
-            <select id="palette-select" class="form-select">
-              <option value="Jet" selected>Jet</option>
-              <option value="Viridis">Viridis</option>
-              <option value="Plasma">Plasma</option>
-              <option value="Inferno">Inferno</option>
-              <option value="Rainbow">Rainbow</option>
-            </select>
-          </div>
-          <div class="form-group" style="margin-bottom: 0.75rem;">
-            <label class="form-label" for="point-size-slider" style="margin-bottom: 0.2rem; display: block;">Point Size</label>
-            <div class="point-size-slider-wrapper" style="position: relative; padding: 2px 0; cursor: pointer;">
-              <input type="range" id="point-size-slider" min="0" max="2" step="1" value="1" class="form-range" aria-label="Point Size (.25 - .5 - 1)" />
-            </div>
-            <div id="point-size-stops" style="display: flex; justify-content: space-between; font-size: 0.68rem; color: var(--text-muted); font-family: var(--font-mono); padding: 0 2px;">
-              <span class="point-size-stop" data-idx="0" role="button" tabindex="0" aria-label="Point size 0.25 mm" style="cursor: pointer; padding: 2px 6px; user-select: none;">0.25</span>
-              <span class="point-size-stop active" data-idx="1" role="button" tabindex="0" aria-label="Point size 0.5 mm" style="cursor: pointer; padding: 2px 6px; user-select: none;">0.5</span>
-              <span class="point-size-stop" data-idx="2" role="button" tabindex="0" aria-label="Point size 1.0 mm" style="cursor: pointer; padding: 2px 6px; user-select: none;">1.0</span>
-            </div>
-          </div>
-          <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.4rem;">
-            <input type="checkbox" id="show-heatmap" checked />
-            <label for="show-heatmap" class="form-label" style="font-size: 0.78rem;">Show Heatmap Overlay</label>
-          </div>
-          <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.4rem;">
-            <input type="checkbox" id="robust-contrast" checked />
-            <label for="robust-contrast" class="form-label" style="font-size: 0.78rem;">Robust Contrast (1st–99th %tile)</label>
-          </div>
-          <div style="display: flex; align-items: center; gap: 0.5rem;">
-            <input type="checkbox" id="show-unassigned" checked />
-            <label for="show-unassigned" class="form-label" style="font-size: 0.78rem;">Show Edge / Unprocessed (Grey)</label>
+              <span>ISO 16610-61 Gaussian Form Removal</span>
+            </label>
           </div>
         </div>
+      </div>
 
-        <!-- 5. System Engine Status -->
-        <div class="system-status">
-          <div class="status-dot" id="status-dot"></div>
-          <span id="status-text">Initializing Engine...</span>
+      <!-- Notification / Error Ribbon -->
+      <div id="error-banner" class="status-ribbon error-banner" style="display: none;">
+        <div class="ribbon-item">
+          <span class="badge badge-warn" id="error-banner-badge">NOTICE</span>
+          <span class="ribbon-label" id="error-banner-label">Status:</span>
+          <span class="error-banner-message" id="error-banner-message"></span>
         </div>
-      </aside>
-
-      <!-- Main Inspection Viewport & Results -->
-      <main class="main-content">
-        <!-- Top Metrology App Bar -->
-        <header class="main-header-row">
-          <div class="header-brand-wrap">
-            <h1 class="main-header">SurfInspect</h1>
-            <div class="sub-header">Digital Surface Roughness Metrology</div>
-          </div>
-          <div class="header-tools-wrap">
-            <button id="theme-btn" class="theme-icon-btn" type="button" aria-label="Toggle theme" title="Toggle Light / Dark Mode">
-              <svg id="theme-icon-sun" class="theme-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <circle cx="12" cy="12" r="5"></circle>
-                <line x1="12" y1="1" x2="12" y2="3"></line>
-                <line x1="12" y1="21" x2="12" y2="23"></line>
-                <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
-                <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
-                <line x1="1" y1="12" x2="3" y2="12"></line>
-                <line x1="21" y1="12" x2="23" y2="12"></line>
-                <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
-                <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
-              </svg>
-              <svg id="theme-icon-moon" class="theme-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display: none;">
-                <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
-              </svg>
-            </button>
-          </div>
-        </header>
-
-        <!-- Status Notification Strip -->
-        <div id="error-banner" class="status-ribbon error-banner" style="display: none;">
-          <div class="ribbon-item">
-            <span class="badge badge-warn" id="error-banner-badge">NOTICE</span>
-            <span class="ribbon-label" id="error-banner-label">Status:</span>
-            <span class="error-banner-message" id="error-banner-message"></span>
-          </div>
-          <div class="error-banner-actions" id="error-banner-actions" style="display: none;">
-            <button type="button" class="dropzone-replace-btn error-action-btn" id="error-action-btn">Apply &amp; Re-run</button>
-          </div>
-          <button type="button" class="error-banner-close" id="error-banner-close" aria-label="Dismiss">&times;</button>
+        <div class="error-banner-actions" id="error-banner-actions" style="display: none;">
+          <button type="button" class="btn btn-sm btn-primary error-action-btn" id="error-action-btn">Apply &amp; Re-run</button>
         </div>
+        <button type="button" class="error-banner-close" id="error-banner-close" aria-label="Dismiss">&times;</button>
+      </div>
 
-        <!-- Empty State -->
-        <div id="empty-state" class="empty-state">
-          <h2 class="empty-state-title">No Surface Scan Loaded</h2>
-          <p class="empty-state-desc">
-            Load a 3D surface scan or select a reference standard in the sidebar to perform digital roughness inspection.
-          </p>
-        </div>
-
-        <!-- Results Dashboard -->
-        <div id="results-container" style="display: none;">
-          <!-- Face Navigation Tabs (For Multi-Face 3D Scans) -->
-          <div class="part-nav-bar" id="part-nav-bar" style="display: none;">
-            <div class="part-nav-pills" id="part-nav-pills"></div>
-          </div>
-
-          <!-- Main Viewport (3) : Metrics (1) Grid -->
-          <div class="dashboard-grid">
-            <div class="chart-card">
-              <div id="chart-loading-overlay" class="chart-loading-overlay" style="display: none;">
-                <div class="spinner"></div>
-                <div class="loading-label" id="chart-loading-text">Rendering Face Topography...</div>
+      <!-- 2. Main Workbench Body -->
+      <div class="workbench-body">
+        <!-- Primary Viewport Stage -->
+        <main class="viewport-stage chart-card">
+          <!-- Clean Technical Empty State -->
+          <div id="empty-state" class="empty-state">
+            <div class="dropzone technical-dropzone" id="dropzone" role="button" tabindex="0" aria-label="Load 3D surface scan file">
+              <div class="dropzone-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                  <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
+                  <polyline points="3.27 6.96 12 12.01 20.73 6.96"/>
+                  <line x1="12" y1="22.08" x2="12" y2="12"/>
+                </svg>
               </div>
-              <!-- Canvas and Plot Containers -->
-              <div id="chart-container" aria-label="3D surface topography chart"></div>
-              <canvas id="pointcloud-canvas" aria-label="3D whole-part point cloud viewport" style="display: none;"></canvas>
+              <div class="dropzone-title" id="dropzone-text">Load 3D Surface Scan</div>
+              <div class="dropzone-subtitle" id="dropzone-hint">
+                Drop optical surface point cloud (.ply, .pcd, .stl, .obj, .csv)
+              </div>
 
-              <!-- All View S_VR Colorbar / Legend Overlay -->
-              <div id="all-view-colorbar" class="all-view-colorbar" style="display: none;">
-                <div class="colorbar-title" id="all-colorbar-title">S<sub>VR</sub> (µm)</div>
-                <div class="colorbar-content">
-                  <div class="colorbar-strip viridis" id="all-colorbar-strip"></div>
-                  <div class="colorbar-ticks" id="all-colorbar-ticks">
-                    <span class="colorbar-tick" id="all-tick-4">-</span>
-                    <span class="colorbar-tick" id="all-tick-3">-</span>
-                    <span class="colorbar-tick" id="all-tick-2">-</span>
-                    <span class="colorbar-tick" id="all-tick-1">-</span>
-                    <span class="colorbar-tick" id="all-tick-0">-</span>
-                  </div>
+              <div class="dropzone-actions">
+                <button type="button" class="btn btn-primary" id="dropzone-browse-btn">Browse Local Scan File</button>
+              </div>
+
+              <div class="dropzone-standards-subtle">
+                <span class="subtle-label">Reference Standards:</span>
+                <div class="subtle-standards-links">
+                  <button type="button" class="subtle-link-btn" data-sample="SCRATA_A1.pcd">A1</button>
+                  <button type="button" class="subtle-link-btn" data-sample="SCRATA_A2.pcd">A2</button>
+                  <button type="button" class="subtle-link-btn" data-sample="SCRATA_A3.pcd">A3</button>
+                  <button type="button" class="subtle-link-btn" data-sample="SCRATA_A4.pcd">A4</button>
+                  <span class="subtle-sep">&bull;</span>
+                  <button type="button" class="subtle-link-btn" data-sample="SCRATA_CUBE_Mix.pcd">3D Cube</button>
                 </div>
               </div>
-            </div>
 
-            <!-- Right: Results Panel -->
-            <div class="kpi-card" id="kpi-card">
-              <!-- KPI Header Title -->
-              <div class="kpi-title" id="kpi-card-title">Roughness (S<sub>VR</sub>)</div>
-              <!-- Primary Number -->
-              <div class="kpi-value-primary" id="kpi-svr">-</div>
-
-              <!-- 3D Part Orientation Thumbnail (Visible during Face Inspection) -->
-              <div class="shape-mini-preview" id="shape-mini-preview" style="display: none;" title="Click to view in 3D scan">
-                <canvas id="mini-preview-canvas" width="200" height="90" aria-label="3D part orientation preview"></canvas>
-              </div>
-
-              <div class="sec-metric">
-                <span class="sec-label" id="sec-label-1">Arithmetic Mean (S<sub>a</sub>)</span>
-                <span class="sec-val" id="sec-val-1">-</span>
-              </div>
-              <div class="sec-metric">
-                <span class="sec-label" id="sec-label-2">Root Mean Square (S<sub>q</sub>)</span>
-                <span class="sec-val" id="sec-val-2">-</span>
-              </div>
-              <div class="sec-metric">
-                <span class="sec-label" id="sec-label-3">Worst Face S<sub>VR</sub></span>
-                <span class="sec-val" id="sec-val-3">-</span>
-              </div>
-              <div class="sec-metric">
-                <span class="sec-label" id="sec-label-4">Mean Face S<sub>VR</sub></span>
-                <span class="sec-val" id="sec-val-4">-</span>
-              </div>
-              <div class="sec-metric">
-                <span class="sec-label" id="sec-label-5">Total Points</span>
-                <span class="sec-val" id="sec-val-5">-</span>
-              </div>
-
-              <!-- Standard Comparators Section -->
-              <div class="kpi-section-title">Standard Comparators</div>
-              <table class="comparator-compact-table">
-                <tbody id="comparator-tbody"></tbody>
-              </table>
-
-              <!-- Autocorrelation Variogram Section -->
-              <div class="kpi-section-title" id="var-section-title">Autocorrelation Variogram &gamma;(h)</div>
-              <div id="variogram-chart"></div>
+              <button type="button" class="dropzone-replace-btn" id="dropzone-replace-btn" style="display: none;">Change</button>
             </div>
           </div>
 
-          <!-- Bottom Section: Faces Breakdown Table + Inspection Report -->
-          <div class="tabs-container">
-            <div class="tab-nav">
-              <button class="tab-btn active" data-tab="tab-faces" id="tab-btn-faces">Faces</button>
-              <button class="tab-btn" data-tab="tab-rep" id="tab-btn-rep">Inspection Report</button>
+          <!-- Loading Spinner Overlay -->
+          <div id="chart-loading-overlay" class="chart-loading-overlay" style="display: none;">
+            <div class="spinner"></div>
+            <div class="loading-label" id="chart-loading-text">Computing Metrology Surface...</div>
+          </div>
+
+          <!-- Native WebGL 3D Point Cloud Viewport Canvas -->
+          <canvas id="pointcloud-canvas" aria-label="3D point cloud viewport" style="display: none;"></canvas>
+
+          <!-- 2D / 3D Topography Elevation Container (Plotly) -->
+          <div id="chart-container" aria-label="3D surface topography chart" style="display: none;"></div>
+
+          <!-- Floating Viewport HUD Controls -->
+          <div class="viewport-hud" id="viewport-hud" style="display: none;">
+            <!-- Point Size Segmented Control [ 0.25 | 0.5 | 1.0 ] -->
+            <div class="hud-group">
+              <span class="hud-label">Point Size</span>
+              <input type="range" id="point-size-slider" min="0" max="2" step="1" value="1" style="display: none;" aria-label="Point size slider" />
+              <div id="point-size-stops" class="segmented-control" role="radiogroup" aria-label="Point Size">
+                <button type="button" class="point-size-stop" data-idx="0" aria-label="Point size 0.25 mm">0.25</button>
+                <button type="button" class="point-size-stop active" data-idx="1" aria-label="Point size 0.5 mm">0.5</button>
+                <button type="button" class="point-size-stop" data-idx="2" aria-label="Point size 1.0 mm">1.0</button>
+              </div>
+              <span id="point-size-val" style="display: none;">0.5</span>
             </div>
 
-            <!-- Tab: 3D Faces Breakdown Table -->
-            <div class="tab-content active" id="tab-faces">
+            <div class="hud-sep"></div>
+
+            <!-- Display Toggles -->
+            <div class="hud-group hud-toggles">
+              <label class="hud-toggle" title="Toggle continuous Svr heatmap coloring">
+                <input type="checkbox" id="show-heatmap" checked />
+                <span>Heatmap</span>
+              </label>
+              <label class="hud-toggle" id="robust-contrast-wrap" title="Robust contrast (1st–99th percentile)">
+                <input type="checkbox" id="robust-contrast" checked />
+                <span>1&ndash;99%</span>
+              </label>
+              <label class="hud-toggle" title="Show edge and unassigned perimeter points">
+                <input type="checkbox" id="show-unassigned" checked />
+                <span>Edges</span>
+              </label>
+            </div>
+
+            <div class="hud-sep"></div>
+
+            <!-- Camera Reset / Reorient -->
+            <button type="button" class="hud-btn" id="hud-cam-reset" title="Reset Camera to Standard View" aria-label="Reset Camera">
+              <svg class="icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><polyline points="3 3 3 8 8 8"/></svg>
+              <span>Reset</span>
+            </button>
+          </div>
+
+          <!-- Unified Svr Colorbar Legend Overlay -->
+          <div id="all-view-colorbar" class="all-view-colorbar" style="display: none;">
+            <div class="colorbar-title" id="all-colorbar-title">S<sub>vr</sub> (&micro;m)</div>
+            <div class="colorbar-content">
+              <div class="colorbar-strip jet" id="all-colorbar-strip"></div>
+              <div class="colorbar-ticks" id="all-colorbar-ticks">
+                <span class="colorbar-tick" id="all-tick-4">-</span>
+                <span class="colorbar-tick" id="all-tick-3">-</span>
+                <span class="colorbar-tick" id="all-tick-2">-</span>
+                <span class="colorbar-tick" id="all-tick-1">-</span>
+                <span class="colorbar-tick" id="all-tick-0">-</span>
+              </div>
+            </div>
+          </div>
+        </main>
+
+        <!-- Right Side: Contextual Metrology Inspector Panel -->
+        <aside class="inspector-panel" id="kpi-card" style="display: none;">
+          <!-- Primary Verdict Card -->
+          <div class="inspector-card verdict-card">
+            <div class="inspector-card-header">
+              <span class="inspector-title" id="kpi-card-title">Surface Roughness (S<sub>vr</sub>)</span>
+            </div>
+            <div class="verdict-number-row">
+              <div class="verdict-primary-value tabular" id="kpi-svr">-</div>
+              <div class="verdict-unit-tag" id="verdict-unit-tag">&micro;m</div>
+            </div>
+          </div>
+
+          <!-- 3D Part Orientation Thumbnail (Face Inspection Mini-Map) -->
+          <div class="shape-mini-preview" id="shape-mini-preview" style="display: none;" title="Click to view whole 3D part">
+            <canvas id="mini-preview-canvas" width="280" height="90" aria-label="3D part orientation preview"></canvas>
+          </div>
+
+          <!-- Key Parameters -->
+          <div class="inspector-card">
+            <div class="inspector-card-header">
+              <span class="inspector-title">Parameters</span>
+            </div>
+            <div class="metric-kv-list">
+              <div class="metric-kv-row">
+                <span class="kv-label" id="sec-label-1">Arithmetic Mean (S<sub>a</sub>)</span>
+                <span class="kv-val tabular" id="sec-val-1">-</span>
+              </div>
+              <div class="metric-kv-row">
+                <span class="kv-label" id="sec-label-2">Root Mean Square (S<sub>q</sub>)</span>
+                <span class="kv-val tabular" id="sec-val-2">-</span>
+              </div>
+              <div class="metric-kv-row">
+                <span class="kv-label" id="sec-label-3">Worst Face S<sub>vr</sub></span>
+                <span class="kv-val tabular" id="sec-val-3">-</span>
+              </div>
+              <div class="metric-kv-row">
+                <span class="kv-label" id="sec-label-4">Mean Face S<sub>vr</sub></span>
+                <span class="kv-val tabular" id="sec-val-4">-</span>
+              </div>
+              <div class="metric-kv-row">
+                <span class="kv-label" id="sec-label-5">Total Points</span>
+                <span class="kv-val tabular" id="sec-val-5">-</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Standard Comparators Section -->
+          <div class="inspector-card">
+            <div class="inspector-card-header">
+              <span class="inspector-title">Standard Comparators</span>
+            </div>
+            <table class="comparator-compact-table">
+              <tbody id="comparator-tbody"></tbody>
+            </table>
+          </div>
+
+          <!-- Autocorrelation Variogram Section -->
+          <div class="inspector-card" id="variogram-card">
+            <div class="inspector-card-header">
+              <span class="inspector-title" id="var-section-title">Autocorrelation Variogram &gamma;(h)</span>
+            </div>
+            <div id="variogram-chart"></div>
+          </div>
+        </aside>
+
+        <!-- Bottom Sheet / Data Drawer -->
+        <footer class="bottom-dock" id="bottom-dock">
+          <div class="dock-header">
+            <div class="dock-tabs">
+              <button type="button" class="tab-btn" data-tab="tab-faces" id="tab-btn-faces" style="display: none;">Faces</button>
+              <button type="button" class="tab-btn active" data-tab="tab-rep" id="tab-btn-rep">Metrology Report</button>
+            </div>
+            <div class="dock-actions">
+              <button type="button" class="dock-arrow-btn" id="dock-toggle-btn" aria-label="Toggle Data Drawer" title="Collapse / Expand Data Panel">
+                <svg class="icon-sm dock-chevron" id="dock-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="18 15 12 9 6 15"/></svg>
+              </button>
+            </div>
+          </div>
+
+          <div class="dock-body" id="dock-body">
+            <!-- Faces Table Tab Content -->
+            <div class="tab-content" id="tab-faces">
               <div class="faces-table-wrapper">
                 <table class="data-table faces-summary-table">
                   <thead>
@@ -270,8 +409,9 @@
                       <th>Target Surface</th>
                       <th>Dimensions</th>
                       <th>Surface Area</th>
-                      <th>S<sub>VR</sub></th>
+                      <th>S<sub>vr</sub></th>
                       <th>SCRATA Equivalent</th>
+                      <th style="text-align: right; width: 56px;">Inspect</th>
                     </tr>
                   </thead>
                   <tbody id="faces-tbody"></tbody>
@@ -279,16 +419,31 @@
               </div>
             </div>
 
-            <!-- Tab: Formal Metrology Report -->
-            <div class="tab-content" id="tab-rep">
+            <!-- Metrology Report Tab Content -->
+            <div class="tab-content active" id="tab-rep">
               <div class="report-view" id="report-pre"></div>
-              <div style="display: flex; gap: 0.65rem;">
-                <button class="btn" id="download-report-btn">Download Report (.txt)</button>
+              <div class="report-actions">
+                <button type="button" class="btn btn-secondary" id="download-report-btn">
+                  <svg class="icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                  <span>Download Report (.txt)</span>
+                </button>
               </div>
             </div>
           </div>
+        </footer>
+      </div>
+
+      <!-- 3. Bottom Workbench Status Bar (Positioned in Actual Bottom Right) -->
+      <footer class="workbench-statusbar" id="workbench-statusbar">
+        <div class="statusbar-spacer"></div>
+        <div class="system-status" id="system-status">
+          <div class="status-dot" id="status-dot"></div>
+          <span id="status-text">Ready</span>
         </div>
-      </main>
+      </footer>
+
+      <!-- Wrapper for legacy resultsContainer query selector in app.js -->
+      <div id="results-container" style="display: none;"></div>
     </div>
 
     <script src="app.js"></script>

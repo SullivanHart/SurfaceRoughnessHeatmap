@@ -312,7 +312,7 @@ def _run_analysis_payload_impl(file_path_str, file_name, grid_mm, short_cutoff_m
             stride_light = max(1, len(p.points) // 3000)
             sample_pts = np.round(p.points[::stride_light], 2).tolist()
 
-            # Compute local SVR for each sampled 3D point via continuous bilinear interpolation
+            # Compute local Svr for each sampled 3D point via continuous bilinear interpolation
             pt_svr_bytes = None
             if hmap is not None and r.plane is not None and len(sampled_pts) > 0:
                 diff = sampled_pts - r.plane.centroid
@@ -520,6 +520,7 @@ self.onmessage = async function (e) {
     else postMessage({ type: 'ready' })
   } else if (type === 'analyze') {
     const thisJobId = ++currentWorkerJobId
+    const analysisId = payload ? payload.analysisId : null
     try {
       if (!pyodideReady) {
         await initPyodide()
@@ -534,8 +535,7 @@ self.onmessage = async function (e) {
         grid_mm,
         short_cutoff_mm,
         long_cutoff_mm,
-        gaussian_mesh,
-        analysisId
+        gaussian_mesh
       } = payload
 
       const ext = fileName.includes('.') ? '.' + fileName.split('.').pop() : ''

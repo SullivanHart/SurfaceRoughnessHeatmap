@@ -1,4 +1,4 @@
-// S_VR Surface Roughness Metrology Dashboard Controller
+// Svr Surface Roughness Metrology Dashboard Controller
 let worker = null
 let currentResult = null
 let selectedFile = null
@@ -34,7 +34,9 @@ const themeIconSun = document.getElementById('theme-icon-sun')
 
 // 3D Planar Faces Elements & State
 let activePatchIndex = 0
-let currentViewMode = '3d-surface' // '2d' | '3d-surface' | '3d-object'
+let currentViewMode = '3d-object' // '3d-object' | '3d-surface'
+let targetedFaceIndex = -1
+let cameraMovedSinceTarget = false
 let previousViewMode = null
 let pointCloudMarkerSize = 0.5
 let pointCloudViewer = null
@@ -140,6 +142,79 @@ function updateDropzoneFileDisplay (file, extraInfo) {
     dropzone.classList.remove('has-file')
     if (dropzoneText) dropzoneText.textContent = 'Upload or Drag 3D Scan'
     if (dropzoneHint) dropzoneHint.textContent = 'PLY, PCD, STL, OBJ, CSV, XYZ'
+  }
+}
+
+function updateOpenScanButton (fileName, ptsStr) {
+  const openScanBtn = document.getElementById('open-scan-btn')
+  if (!openScanBtn) return
+  if (fileName) {
+    openScanBtn.classList.add('occupied')
+    openScanBtn.title = `Currently loaded: ${fileName}${ptsStr ? ` (${ptsStr})` : ''}. Click to open a different scan.`
+    openScanBtn.innerHTML = `
+      <svg class="icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+      <span class="scan-btn-filename">${fileName}</span>
+      <span class="scan-btn-pts">${ptsStr ? `• ${ptsStr}` : ''}</span>
+    `
+  } else {
+    openScanBtn.classList.remove('occupied')
+    openScanBtn.title = 'Open 3D optical scan file (.ply, .pcd, .stl, .csv)'
+    openScanBtn.innerHTML = `
+      <svg class="icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+      <span id="open-scan-text">Open Scan</span>
+    `
+  }
+}
+
+function setProcessingUploadVisibility (isProcessing, fileName) {
+  const openScanBtn = document.getElementById('open-scan-btn')
+  const emptyStateEl = document.getElementById('empty-state')
+  const loadingOverlay = document.getElementById('chart-loading-overlay')
+  const loadingText = document.getElementById('chart-loading-text')
+  const fileInputEl = document.getElementById('file-input')
+  const benchmarksBtn = document.getElementById('benchmarks-btn')
+  const benchmarksPopover = document.getElementById('benchmarks-popover')
+
+  const exportBtnEl = document.getElementById('export-btn')
+  const exportPopoverEl = document.getElementById('export-popover')
+  const downloadBtnEl = document.getElementById('download-report-btn')
+
+  if (isProcessing) {
+    if (openScanBtn) openScanBtn.style.display = 'none'
+    if (emptyStateEl) emptyStateEl.style.display = 'none'
+    if (fileInputEl) fileInputEl.disabled = true
+    if (benchmarksBtn) {
+      benchmarksBtn.disabled = true
+      benchmarksBtn.style.opacity = '0.35'
+      benchmarksBtn.style.pointerEvents = 'none'
+    }
+    if (benchmarksPopover) benchmarksPopover.style.display = 'none'
+    if (exportBtnEl) {
+      exportBtnEl.disabled = true
+      exportBtnEl.classList.remove('active')
+    }
+    if (exportPopoverEl) exportPopoverEl.style.display = 'none'
+    if (downloadBtnEl) downloadBtnEl.disabled = true
+    if (loadingOverlay) loadingOverlay.style.display = 'flex'
+    if (loadingText) loadingText.textContent = fileName ? `Processing ${fileName}...` : 'Computing Metrology Surface...'
+  } else {
+    if (openScanBtn) openScanBtn.style.display = 'inline-flex'
+    if (fileInputEl) fileInputEl.disabled = false
+    if (benchmarksBtn) {
+      benchmarksBtn.disabled = false
+      benchmarksBtn.style.opacity = ''
+      benchmarksBtn.style.pointerEvents = ''
+    }
+    if (exportBtnEl) {
+      exportBtnEl.disabled = !currentResult
+    }
+    if (downloadBtnEl) {
+      downloadBtnEl.disabled = !currentResult
+    }
+    if (loadingOverlay) loadingOverlay.style.display = 'none'
+    if (!currentResult && emptyStateEl) {
+      emptyStateEl.style.display = 'flex'
+    }
   }
 }
 
@@ -296,6 +371,7 @@ function initWorker () {
         return
       }
       isAnalyzing = false
+      setProcessingUploadVisibility(false)
       if (statusDot) statusDot.className = 'status-dot ready'
       completeProgress('Ready')
       hideErrorBanner()
@@ -303,11 +379,17 @@ function initWorker () {
       renderResults(data)
     } else if (type === 'error') {
       isAnalyzing = false
+      setProcessingUploadVisibility(false)
       if (statusDot) statusDot.className = 'status-dot error'
       resetProgress()
       if (resultsContainer) {
         resultsContainer.style.opacity = '1'
         resultsContainer.style.pointerEvents = 'auto'
+      }
+      const inspectorEl = document.getElementById('kpi-card')
+      if (inspectorEl) {
+        inspectorEl.style.opacity = '1'
+        inspectorEl.style.pointerEvents = 'auto'
       }
 
       let cleanMsg = (error || '').replace(/^ValueError:\s*/i, '').replace(/^RuntimeError:\s*/i, '').trim()
@@ -340,6 +422,7 @@ function initWorker () {
   worker.onerror = function (err) {
     console.error('Worker error:', err)
     isAnalyzing = false
+    setProcessingUploadVisibility(false)
     if (statusDot) statusDot.className = 'status-dot ready'
     resetProgress()
     if (statusText) statusText.textContent = `Worker Error: ${err.message || 'Script execution failed'}`
@@ -347,9 +430,12 @@ function initWorker () {
 }
 
 function handleFileSelect (file) {
-  if (!file) return
+  if (!file || isAnalyzing) return
   selectedFile = file
   activePatchIndex = 0
+
+  // Hide upload option while processing
+  setProcessingUploadVisibility(true, file.name)
 
   // Reset or sync sample dropdown: if this file was loaded as a sample scan, show it;
   // otherwise (uploaded user file), default dropdown to "Select…" since the scan isn't in there.
@@ -363,13 +449,18 @@ function handleFileSelect (file) {
     }
   }
 
-  // Immediately update Dropzone filename and size
+  // Update Dropzone filename and size
   updateDropzoneFileDisplay(file)
 
   // If previous results are displayed, subtly dim them to indicate active recalculation
   if (resultsContainer && resultsContainer.style.display !== 'none') {
     resultsContainer.style.opacity = '0.45'
     resultsContainer.style.pointerEvents = 'none'
+  }
+  const inspectorEl = document.getElementById('kpi-card')
+  if (inspectorEl && inspectorEl.style.display !== 'none') {
+    inspectorEl.style.opacity = '0.45'
+    inspectorEl.style.pointerEvents = 'none'
   }
 
   resetProgress()
@@ -382,6 +473,7 @@ function handleFileSelect (file) {
 async function startAnalysis (file) {
   hideErrorBanner()
   isAnalyzing = true
+  setProcessingUploadVisibility(true, file.name)
   const thisAnalysisId = ++currentAnalysisId
   analysisStartTime = performance.now()
   if (statusDot) statusDot.className = 'status-dot analyzing'
@@ -411,21 +503,51 @@ async function startAnalysis (file) {
   )
 }
 
+function formatValNum (valUm, unit) {
+  if (typeof valUm !== 'number' || isNaN(valUm)) return '-'
+  if (unit === 'mm') return (valUm / 1000.0).toFixed(3)
+  if (unit === 'in') return (valUm / 25400.0).toFixed(4)
+  return valUm.toFixed(1)
+}
+
 function formatVal (valUm, unit) {
   if (typeof valUm !== 'number' || isNaN(valUm)) return '-'
-  if (unit === 'mm') return (valUm / 1000.0).toFixed(3) + ' mm'
-  if (unit === 'in') return (valUm / 25400.0).toFixed(4) + ' in'
-  return valUm.toFixed(1) + ' µm'
+  const u = unit || 'µm'
+  return `${formatValNum(valUm, unit)} ${u}`
 }
 
 function renderResults (res) {
-  emptyState.style.display = 'none'
-  resultsContainer.style.display = 'block'
-  resultsContainer.style.opacity = '1'
-  resultsContainer.style.pointerEvents = 'auto'
+  currentResult = res
+  if (emptyState) emptyState.style.display = 'none'
+  if (resultsContainer) {
+    resultsContainer.style.display = 'block'
+    resultsContainer.style.opacity = '1'
+    resultsContainer.style.pointerEvents = 'auto'
+  }
+
+  const inspectorEl = document.getElementById('kpi-card')
+  if (inspectorEl) {
+    inspectorEl.style.display = 'flex'
+    inspectorEl.style.opacity = '1'
+    inspectorEl.style.pointerEvents = 'auto'
+  }
+  const hudEl = document.getElementById('viewport-hud')
+  if (hudEl) hudEl.style.display = 'flex'
+  const dockEl = document.getElementById('bottom-dock')
+  if (dockEl) dockEl.style.display = 'flex'
+  const exportBtnEl = document.getElementById('export-btn')
+  if (exportBtnEl) exportBtnEl.disabled = false
 
   const fileName = res.effective_name || (selectedFile ? selectedFile.name : 'scan')
   const totalPoints = res.total_points || res.processed_points || 0
+
+  updateOpenScanButton(fileName, `${totalPoints.toLocaleString()} pts`)
+
+  const unitTag = document.getElementById('verdict-unit-tag')
+  if (unitTag && unitSelect) {
+    unitTag.textContent = unitSelect.value || 'µm'
+  }
+
   updateDropzoneFileDisplay(
     selectedFile,
     `${totalPoints.toLocaleString()} pts`
@@ -434,7 +556,7 @@ function renderResults (res) {
   // Report text
   if (reportPre) reportPre.textContent = res.report_text || ''
 
-  if (res.is_3d && res.patches && res.patches.length > 0) {
+  if (res.is_3d && res.patches && res.patches.length > 1) {
     render3DFaces(res)
   } else {
     renderSingleSurface(res)
@@ -443,19 +565,26 @@ function renderResults (res) {
 
 function render3DFaces (res) {
   const unit = unitSelect ? unitSelect.value : 'µm'
-  if (partNavBar) partNavBar.style.display = 'flex'
+  const dockEl = document.getElementById('bottom-dock')
+  if (dockEl) {
+    dockEl.classList.add('expanded')
+  }
+  const patchCount = res.patches ? res.patches.length : 0
   if (tabBtnFaces) {
     tabBtnFaces.style.display = 'inline-block'
-    tabBtnFaces.textContent = `Faces (${res.patches.length})`
+    tabBtnFaces.textContent = `Faces (${patchCount})`
+  }
+  if (tabBtnRep) {
+    tabBtnRep.textContent = 'Metrology Report'
   }
 
-  // Ensure Faces Breakdown is active tab
+  // Ensure Faces tab is active
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'))
   document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'))
   if (tabBtnFaces) {
     tabBtnFaces.classList.add('active')
     tabBtnFaces.style.display = 'inline-block'
-    tabBtnFaces.textContent = `Faces (${res.patches.length})`
+    tabBtnFaces.textContent = `Faces (${patchCount})`
   }
   const tabFacesContent = document.getElementById('tab-faces')
   if (tabFacesContent) tabFacesContent.classList.add('active')
@@ -505,37 +634,9 @@ function render3DFaces (res) {
     })
   }
 
-  // Render Table in tab-faces with rows (Whole Part + N Faces)
+  // Render Table in tab-faces with rows (Individual Faces)
   if (facesTbody) {
     facesTbody.innerHTML = ''
-
-    // Row 0: Whole Part
-    const trOverview = document.createElement('tr')
-    trOverview.className = `overview-row ${activePatchIndex === -1 ? 'active-row' : ''}`
-    trOverview.setAttribute('data-target', 'overview')
-
-    const totalPts = (res.assigned_points || res.processed_points || res.total_points || 0).toLocaleString()
-    const totalArea = res.total_area_mm2
-      ? `${res.total_area_mm2.toLocaleString()} mm²`
-      : `${res.patches.reduce((s, p) => s + (p.area_mm2 || 0), 0).toLocaleString()} mm²`
-    const bbox = res.bounding_box_mm
-      ? `${res.bounding_box_mm[0]} × ${res.bounding_box_mm[1]} × ${res.bounding_box_mm[2]} mm`
-      : '50.0 × 50.0 × 50.0 mm'
-    const meanSa = res.mean_sa_um || (res.patches.reduce((s, p) => s + (p.sa_um || 0), 0) / res.patches.length)
-    const meanSq = res.mean_sq_um || (res.patches.reduce((s, p) => s + (p.sq_um || 0), 0) / res.patches.length)
-    const worstRating = worstPatch?.comparators?.['SCRATA (A802)'] || worstPatch?.comparators?.['SCRATA (ASTM A802)'] || worstPatch?.comparators?.['SCRATA'] || 'Overall Rating'
-
-    trOverview.innerHTML = `
-      <td><span class="part-pill-swatch" style="background:var(--text-muted); margin-right:6px; display:inline-block;"></span><strong>Whole Part</strong></td>
-      <td>${bbox}</td>
-      <td>${totalArea}</td>
-      <td><strong>${formatVal(res.worst_svr_um || (worstPatch ? worstPatch.svr_um : 0), unit)}</strong></td>
-      <td><strong>${worstRating}</strong></td>
-    `
-    trOverview.addEventListener('click', () => {
-      selectOverview()
-    })
-    facesTbody.appendChild(trOverview)
 
     // Rows 1..N: Individual Faces
     res.patches.forEach((patch, idx) => {
@@ -554,9 +655,22 @@ function render3DFaces (res) {
         <td>${area}</td>
         <td><strong>${formatVal(patch.svr_um, unit)}</strong></td>
         <td>${scrataRating}</td>
+        <td style="text-align: right;">
+          <button type="button" class="row-inspect-btn face-inspect-btn" data-patch-idx="${idx}" title="Inspect ${patch.name} Topography" aria-label="Inspect ${patch.name}">
+            <svg class="icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          </button>
+        </td>
       `
+      const inspectBtn = tr.querySelector('.face-inspect-btn')
+      if (inspectBtn) {
+        inspectBtn.addEventListener('click', e => {
+          e.stopPropagation()
+          selectFace(idx)
+        })
+      }
+
       tr.addEventListener('click', () => {
-        selectFace(idx)
+        handleTableRowClick(idx)
       })
       facesTbody.appendChild(tr)
     })
@@ -564,6 +678,8 @@ function render3DFaces (res) {
 
   // Start in Part Overview with 3D point cloud scan visible first
   currentViewMode = '3d-object'
+  targetedFaceIndex = -1
+  cameraMovedSinceTarget = false
   selectOverview()
 
   // Warm up surface point grids in idle time so face switching is instant
@@ -579,10 +695,50 @@ function render3DFaces (res) {
   }
 }
 
+function updateTableRowHighlight (index) {
+  if (!facesTbody) return
+  const rows = facesTbody.querySelectorAll('tr')
+  rows.forEach(r => {
+    r.classList.toggle('active-row', index >= 0 && r.getAttribute('data-patch-idx') === String(index))
+  })
+}
+
+function handleTableRowClick (idx) {
+  if (!currentResult) return
+
+  const isMultiFace = Boolean(currentResult.is_3d && currentResult.patches && currentResult.patches.length > 1)
+  if (!isMultiFace) {
+    activePatchIndex = 0
+    currentViewMode = '3d-surface'
+    updateActiveChart()
+    return
+  }
+
+  // Row -1: Whole Part / Overview row
+  if (idx === -1) {
+    selectOverview()
+    targetedFaceIndex = -1
+    cameraMovedSinceTarget = false
+    if (pointCloudViewer) {
+      pointCloudViewer.setCameraView('iso')
+    }
+    return
+  }
+
+  if (!currentResult.patches || !currentResult.patches[idx]) return
+
+  // Clicking a row ALWAYS shows all with the shape oriented to that face!
+  orientFaceInOverview(idx)
+}
+
 function selectOverview (options = {}) {
   if (!currentResult) return
   activePatchIndex = -1
-  currentViewMode = '3d-object'
+  currentViewMode = '3d-object' // Whole part is ALWAYS 3D Model!
+  if (!options || !options.keepTarget) {
+    targetedFaceIndex = -1
+    cameraMovedSinceTarget = false
+  }
   const unit = unitSelect ? unitSelect.value : 'µm'
   const res = currentResult
 
@@ -595,11 +751,8 @@ function selectOverview (options = {}) {
   }
 
   // Update table rows active class
-  if (facesTbody) {
-    const rows = facesTbody.querySelectorAll('tr')
-    rows.forEach(r => {
-      r.classList.toggle('active-row', r.getAttribute('data-target') === 'overview')
-    })
+  if (!options || !options.keepHighlight) {
+    updateTableRowHighlight(-1)
   }
 
   // Find worst face metadata for description
@@ -615,18 +768,18 @@ function selectOverview (options = {}) {
   }
 
   // Populate Right KPI Card in Part Overview Mode
-  if (kpiCardTitle) kpiCardTitle.innerHTML = 'Roughness (S<sub>VR</sub>)'
-  if (kpiSvr) kpiSvr.textContent = formatVal(res.worst_svr_um || (worstPatch ? worstPatch.svr_um : 0), unit)
+  if (kpiCardTitle) kpiCardTitle.innerHTML = 'Roughness (S<sub>vr</sub>)'
+  if (kpiSvr) kpiSvr.textContent = formatValNum(res.worst_svr_um || (worstPatch ? worstPatch.svr_um : 0), unit)
 
   if (secLabel1) secLabel1.innerHTML = 'Arithmetic Mean (S<sub>a</sub>)'
   if (secVal1) secVal1.textContent = worstPatch ? formatVal(worstPatch.sa_um, unit) : '-'
   if (secLabel2) secLabel2.innerHTML = 'Root Mean Square (S<sub>q</sub>)'
   if (secVal2) secVal2.textContent = worstPatch ? formatVal(worstPatch.sq_um, unit) : '-'
-  if (secLabel3) secLabel3.innerHTML = 'Worst Face S<sub>VR</sub>'
+  if (secLabel3) secLabel3.innerHTML = 'Worst Face S<sub>vr</sub>'
   if (secVal3) secVal3.textContent = formatVal(res.worst_svr_um || (worstPatch ? worstPatch.svr_um : 0), unit)
-  if (secLabel4) secLabel4.innerHTML = 'Mean Face S<sub>VR</sub>'
+  if (secLabel4) secLabel4.innerHTML = 'Mean Face S<sub>vr</sub>'
   if (secVal4) secVal4.textContent = formatVal(res.mean_svr_um || 0, unit)
-  if (secLabel5) secLabel5.innerHTML = 'Total Points'
+  if (secLabel5) secLabel5.innerHTML = 'Active Points'
   if (secVal5) secVal5.textContent = `${(res.assigned_points || res.total_points || res.processed_points || 0).toLocaleString()} pts`
 
   // Update Compact Comparators Table in Right Results Panel
@@ -662,25 +815,36 @@ function orientFaceInOverview (index) {
   if (!currentResult || !currentResult.patches || !currentResult.patches[index]) return
   activePatchIndex = -1
   currentViewMode = '3d-object'
+  targetedFaceIndex = index
+  cameraMovedSinceTarget = false
 
-  // Update table rows active class without changing results panel
-  if (facesTbody) {
-    const rows = facesTbody.querySelectorAll('tr')
-    rows.forEach(r => {
-      r.classList.toggle('active-row', r.getAttribute('data-patch-idx') === String(index))
-    })
-  }
+  // Update table rows active class to highlight the focused face
+  updateTableRowHighlight(index)
 
   // Smoothly turn 3D cube camera to face on the All view
   if (pointCloudViewer) {
     pointCloudViewer.alignToFace(index)
     pointCloudViewer.setActivePatch(-1)
   }
+
+  updateActiveChart()
 }
 
 function selectFace (index) {
-  if (!currentResult || !currentResult.patches || !currentResult.patches[index]) return
+  if (!currentResult) return
+  if (!currentResult.is_3d) {
+    activePatchIndex = 0
+    currentViewMode = '3d-surface'
+    updateTableRowHighlight(0)
+    updateActiveChart()
+    renderVariogram(currentResult)
+    return
+  }
+  if (!currentResult.patches || !currentResult.patches[index]) return
   activePatchIndex = index
+  currentViewMode = '3d-surface' // Face inspection is ALWAYS Topography!
+  targetedFaceIndex = index
+  cameraMovedSinceTarget = false
   const patch = currentResult.patches[index]
   const unit = unitSelect ? unitSelect.value : 'µm'
 
@@ -697,16 +861,11 @@ function selectFace (index) {
   }
 
   // Update table rows active class
-  if (facesTbody) {
-    const rows = facesTbody.querySelectorAll('tr')
-    rows.forEach(r => {
-      r.classList.toggle('active-row', r.getAttribute('data-patch-idx') === String(index))
-    })
-  }
+  updateTableRowHighlight(index)
 
   // Populate Right KPI Card in Face Deep-Dive Mode
-  if (kpiCardTitle) kpiCardTitle.innerHTML = `Face ${index + 1} Roughness (S<sub>VR</sub>)`
-  if (kpiSvr) kpiSvr.textContent = formatVal(patch.svr_um, unit)
+  if (kpiCardTitle) kpiCardTitle.innerHTML = `Face ${index + 1} Roughness (S<sub>vr</sub>)`
+  if (kpiSvr) kpiSvr.textContent = formatValNum(patch.svr_um, unit)
 
   if (secLabel1) secLabel1.innerHTML = 'Arithmetic Mean (S<sub>a</sub>)'
   if (secVal1) secVal1.textContent = formatVal(patch.sa_um, unit)
@@ -716,7 +875,7 @@ function selectFace (index) {
   if (secVal3) secVal3.textContent = patch.dims_mm ? `${patch.dims_mm[0]} × ${patch.dims_mm[1]} mm` : '-'
   if (secLabel4) secLabel4.innerHTML = 'Surface Area'
   if (secVal4) secVal4.textContent = patch.area_mm2 ? `${patch.area_mm2.toLocaleString()} mm²` : '-'
-  if (secLabel5) secLabel5.innerHTML = 'Face Points'
+  if (secLabel5) secLabel5.innerHTML = 'Active Points'
   if (secVal5) secVal5.textContent = `${(patch.point_count || patch.processed_points || 0).toLocaleString()} pts`
 
   // Update Compact Comparators Table for this Face
@@ -736,92 +895,61 @@ function selectFace (index) {
     })
   }
 
-  currentViewMode = '3d-surface'
+  // Set active patch in viewer
   if (pointCloudViewer) {
-    if (pointCloudViewer.animating) {
-      cancelAnimationFrame(pointCloudViewer.animating)
-      pointCloudViewer.animating = null
-    }
-    pointCloudViewer.dampingActive = false
     pointCloudViewer.setActivePatch(index)
   }
 
-  // Render corner 3D shape thumbnail & Variogram FIRST so right KPI card expands to its full height
+  // Render corner 3D shape thumbnail & Variogram
   renderShapeMiniPreview()
   renderVariogram(patch)
 
-  const kpiCardElem = document.getElementById('kpi-card')
-  const chartCardElem = document.querySelector('.chart-card')
-  const targetHeight = Math.max(
-    580,
-    kpiCardElem ? (kpiCardElem.offsetHeight - 16) : 580,
-    chartCardElem ? (chartCardElem.offsetHeight - 16) : 580
-  )
-
-  const chartContainer = document.getElementById('chart-container')
-  const pcCanvas = document.getElementById('pointcloud-canvas')
-  const loadingOverlay = document.getElementById('chart-loading-overlay')
-
-  if (chartContainer) {
-    chartContainer.style.height = `${targetHeight}px`
-    chartContainer.style.display = 'block'
-  }
-  if (pcCanvas) pcCanvas.style.display = 'none'
-  if (loadingOverlay) loadingOverlay.style.display = 'flex'
-
-  // Yield to browser to paint active pill & loading spinner before heavy Plotly render
-  requestAnimationFrame(() => {
-    setTimeout(() => {
-      updateActiveChart()
-    }, 16)
-  })
+  // Switch to Topography view for this face
+  updateActiveChart()
 }
 
 function renderSingleSurface (res) {
   const unit = unitSelect ? unitSelect.value : 'µm'
   activePatchIndex = 0
-  currentViewMode = '3d-surface'
+  currentViewMode = '3d-surface' // Single surface is ALWAYS Face Topography!
 
-  if (partNavBar) partNavBar.style.display = 'none'
+  const dockEl = document.getElementById('bottom-dock')
+  if (dockEl) {
+    dockEl.classList.remove('expanded')
+  }
 
-  // Single surface / sample scan: hide Faces tab and display Inspection Report
+  // Single surface scan (not 3D shape): NO surface / faces tab!
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'))
   document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'))
   if (tabBtnFaces) {
     tabBtnFaces.style.display = 'none'
+    tabBtnFaces.classList.remove('active')
   }
+  const tabFacesContent = document.getElementById('tab-faces')
+  if (tabFacesContent) {
+    tabFacesContent.classList.remove('active')
+  }
+
   if (tabBtnRep) {
+    tabBtnRep.style.display = 'inline-block'
+    tabBtnRep.textContent = 'Metrology Report'
     tabBtnRep.classList.add('active')
   }
   const tabRepContent = document.getElementById('tab-rep')
-  if (tabRepContent) tabRepContent.classList.add('active')
-
-  const patchW = res.patch_width_mm || 0
-  const patchH = res.patch_height_mm || 0
-
-  // Render Single Surface Row in breakdown table
-  if (facesTbody) {
-    facesTbody.innerHTML = ''
-    const tr = document.createElement('tr')
-    tr.className = 'active-row'
-    const scrataRating = res.comparators?.['SCRATA (A802)'] || res.comparators?.['SCRATA (ASTM A802)'] || res.comparators?.['SCRATA'] || 'N/A'
-    const dims = `${patchW.toFixed(1)} × ${patchH.toFixed(1)} mm`
-    const area = res.patch_area_mm2 ? `${res.patch_area_mm2.toLocaleString()} mm²` : `${(patchW * patchH).toLocaleString()} mm²`
-    const pts = (res.processed_points || 0).toLocaleString()
-
-    tr.innerHTML = `
-      <td><span class="part-pill-swatch" style="background:var(--text-muted); margin-right:6px; display:inline-block;"></span><strong>${res.effective_name || 'Surface Scan'}</strong></td>
-      <td>${dims}</td>
-      <td>${area}</td>
-      <td><strong>${formatVal(res.svr_um, unit)}</strong></td>
-      <td>${scrataRating}</td>
-    `
-    facesTbody.appendChild(tr)
+  if (tabRepContent) {
+    tabRepContent.classList.add('active')
   }
 
+  if (facesTbody) {
+    facesTbody.innerHTML = ''
+  }
+
+  const patchW = (res && typeof res.patch_width_mm === 'number') ? res.patch_width_mm : 0
+  const patchH = (res && typeof res.patch_height_mm === 'number') ? res.patch_height_mm : 0
+
   // KPI Card
-  if (kpiCardTitle) kpiCardTitle.innerHTML = 'Roughness (S<sub>VR</sub>)'
-  if (kpiSvr) kpiSvr.textContent = formatVal(res.svr_um, unit)
+  if (kpiCardTitle) kpiCardTitle.innerHTML = 'Roughness (S<sub>vr</sub>)'
+  if (kpiSvr) kpiSvr.textContent = formatValNum(res.svr_um, unit)
 
   if (secLabel1) secLabel1.innerHTML = 'Arithmetic Mean (S<sub>a</sub>)'
   if (secVal1) secVal1.textContent = formatVal(res.sa_um, unit)
@@ -853,14 +981,17 @@ function renderSingleSurface (res) {
 
   updateActiveChart()
   renderVariogram(res)
+  const previewWidget = document.getElementById('shape-mini-preview')
+  if (previewWidget) previewWidget.style.display = 'none'
 }
 
 function updateActiveChart () {
   if (!currentResult) return
 
-  const isOverview = (currentResult.is_3d && activePatchIndex === -1)
-  if (isOverview) {
+  if (activePatchIndex === -1) {
     currentViewMode = '3d-object'
+  } else {
+    currentViewMode = '3d-surface'
   }
 
   const target =
@@ -872,19 +1003,19 @@ function updateActiveChart () {
 
   const chartContainer = document.getElementById('chart-container')
   const pcCanvas = document.getElementById('pointcloud-canvas')
+  const loadingOverlay = document.getElementById('chart-loading-overlay')
+
   // Show/hide appropriate viewer element and dispatch render
   if (currentViewMode === '3d-object') {
     if (chartContainer) chartContainer.style.display = 'none'
+    if (loadingOverlay) loadingOverlay.style.display = 'none'
     if (pcCanvas) pcCanvas.style.display = 'block'
     render3DObject(currentResult)
     if (pointCloudViewer) {
       if (currentResult.is_3d && activePatchIndex >= 0) {
         pointCloudViewer.setActivePatch(activePatchIndex)
-        pointCloudViewer.alignToFace(activePatchIndex)
-      } else if (currentResult.is_3d) {
-        pointCloudViewer.setActivePatch(-1)
       } else {
-        pointCloudViewer.setActivePatch(0)
+        pointCloudViewer.setActivePatch(-1)
       }
       pointCloudViewer.resize()
     }
@@ -903,6 +1034,7 @@ function updateActiveChart () {
       chartContainer.style.display = 'block'
     }
     if (pcCanvas) pcCanvas.style.display = 'none'
+    if (loadingOverlay) loadingOverlay.style.display = 'flex'
     render3DSurface(target)
   }
 
@@ -915,8 +1047,8 @@ function renderShapeMiniPreview () {
   const canvas = document.getElementById('mini-preview-canvas')
   if (!previewWidget || !canvas) return
 
-  // Only show when inspecting an individual face in 2D heatmap or 3D surface elevation mode
-  if (!currentResult || !currentResult.is_3d || !currentResult.patches || activePatchIndex < 0 || currentViewMode === '3d-object') {
+  // Only show when inspecting an individual face in multi-face parts
+  if (!currentResult || !currentResult.is_3d || !currentResult.patches || currentResult.patches.length <= 1 || activePatchIndex < 0 || currentViewMode === '3d-object') {
     previewWidget.style.display = 'none'
     return
   }
@@ -1088,8 +1220,8 @@ function getOrExtractSurfaceData (target, unit, robust) {
     ? target.grid_z
     : svrGrid
 
-  const svrMultiplier = (unit === 'mm') ? 0.001 : (unit === 'in' ? (1.0 / 25400.0) : 1.0)
-  const zMultiplier = 0.001 // µm to mm
+  const svrMultiplier = 1.0 // Svr roughness is strictly in µm per ASTM metrology standard
+  const zMultiplier = 0.001 // µm to mm for 3D coordinates
 
   // Adaptive stride for safe, high-performance Plotly scatter3d (caps at ~50,000 points to prevent WebGL crashes)
   const MAX_PLOT_PTS = 50000
@@ -1099,6 +1231,7 @@ function getOrExtractSurfaceData (target, unit, robust) {
   const validX = []
   const validY = []
   const validZ = []
+  const validZUm = []
   const validIntensity = []
   const invalidX = []
   const invalidY = []
@@ -1132,6 +1265,7 @@ function getOrExtractSurfaceData (target, unit, robust) {
           validX.push(xVal)
           validY.push(yVal)
           validZ.push(zMm)
+          validZUm.push(zRaw)
           validIntensity.push(sConverted)
         }
       } else if (hasZ && isSampleRow && (c % stride === 0)) {
@@ -1165,7 +1299,7 @@ function getOrExtractSurfaceData (target, unit, robust) {
     cmax = cmin + 1.0
   }
 
-  const res = { validX, validY, validZ, validIntensity, invalidX, invalidY, invalidZ, cmin, cmax, unit, robust, numRows, numCols, pitch, stride }
+  const res = { validX, validY, validZ, validZUm, validIntensity, invalidX, invalidY, invalidZ, cmin, cmax, unit, robust, numRows, numCols, pitch, stride }
   target._extractedSurface = res
   return res
 }
@@ -1180,16 +1314,17 @@ function render3DSurface (target) {
   const extracted = getOrExtractSurfaceData(target, unit, robust)
   if (!extracted) {
     console.warn('render3DSurface: No surface grid available', target)
+    const overlay = document.getElementById('chart-loading-overlay')
+    if (overlay) overlay.style.display = 'none'
     return
   }
 
-  const { validX, validY, validZ, validIntensity, invalidX, invalidY, invalidZ, cmin, cmax, numRows, numCols, pitch } = extracted
+  const { validX, validY, validZ, validZUm, validIntensity, invalidX, invalidY, invalidZ, cmin, cmax, numRows, numCols, pitch } = extracted
 
   const isDark = getTheme() === 'dark'
-  const chartBg = isDark ? '#1c1d22' : '#ffffff'
-  const chartText = isDark ? '#c7cbd3' : '#0f172a'
-  const gridColor = isDark ? '#2e3039' : '#e2e8f0'
-  const metricLabel = `S_VR (${unit})`
+  const chartBg = isDark ? '#121318' : '#fbfbfd'
+  const chartText = isDark ? '#9ca3af' : '#515154'
+  const gridColor = isDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.07)'
 
   const showHeatmap = showHeatmapCheckbox ? showHeatmapCheckbox.checked : true
   const faceColor = FACE_PALETTE[activePatchIndex >= 0 ? (activePatchIndex % FACE_PALETTE.length) : 0] || '#2563eb'
@@ -1202,6 +1337,7 @@ function render3DSurface (target) {
     x: validX,
     y: validY,
     z: validZ,
+    customdata: validZUm,
     marker: showHeatmap ? {
       size: pointCloudMarkerSize,
       color: validIntensity,
@@ -1209,19 +1345,7 @@ function render3DSurface (target) {
       cmin: cmin,
       cmax: cmax,
       cauto: false,
-      showscale: true,
-      colorbar: {
-        title: {
-          text: metricLabel,
-          side: 'top',
-          font: { size: 11, color: chartText }
-        },
-        len: 0.86,
-        thickness: 16,
-        x: 1.02,
-        xpad: 18,
-        tickfont: { size: 10, color: chartText }
-      },
+      showscale: false,
       opacity: 1.0
     } : {
       size: pointCloudMarkerSize,
@@ -1230,8 +1354,8 @@ function render3DSurface (target) {
       opacity: 1.0
     },
     hovertemplate: showHeatmap
-      ? `Surface X: %{x:.2f} mm<br>Surface Y: %{y:.2f} mm<br>Elevation Z: %{z:.3f} mm<br>Local S_VR: %{marker.color:${unit === 'µm' ? '.1f' : (unit === 'mm' ? '.3f' : '.4f')}} ${unit}<extra></extra>`
-      : `${target.name || 'Face'}<br>Surface X: %{x:.2f} mm<br>Surface Y: %{y:.2f} mm<br>Elevation Z: %{z:.3f} mm<extra></extra>`
+      ? `Surface X: %{x:.2f} mm<br>Surface Y: %{y:.2f} mm<br>Elevation Z: %{customdata:.1f} µm<br>Local Svr: %{marker.color:.1f} µm<extra></extra>`
+      : `${target.name || 'Face'}<br>Surface X: %{x:.2f} mm<br>Surface Y: %{y:.2f} mm<br>Elevation Z: %{customdata:.1f} µm<extra></extra>`
   }
 
   // Collect invalid and peeled edge points belonging specifically to this face
@@ -1265,13 +1389,13 @@ function render3DSurface (target) {
   const layout = {
     autosize: true,
     height: targetHeight,
-    margin: { l: 65, r: 85, t: 30, b: 60 },
+    margin: { l: 40, r: 40, t: 30, b: 40 },
     hovermode: 'closest',
     hoverdistance: 3,
     uirevision: (target.name || 'surface') + '_' + currentViewMode,
     scene: {
       xaxis: {
-        title: { text: 'Surface X (mm)', font: { size: 12, color: chartText } },
+        title: { text: 'X (mm)', font: { size: 11, color: chartText } },
         color: chartText,
         gridcolor: gridColor,
         showbackground: false,
@@ -1283,7 +1407,7 @@ function render3DSurface (target) {
         tickfont: { size: 10, color: chartText }
       },
       yaxis: {
-        title: { text: 'Surface Y (mm)', font: { size: 12, color: chartText } },
+        title: { text: 'Y (mm)', font: { size: 11, color: chartText } },
         color: chartText,
         gridcolor: gridColor,
         showbackground: false,
@@ -1318,51 +1442,11 @@ function render3DSurface (target) {
 
   const config = {
     responsive: true,
+    displayModeBar: false,
     displaylogo: false,
     plotGlPixelRatio: Math.min(1.5, window.devicePixelRatio || 1),
     scrollZoom: true,
-    doubleClick: false,
-    modeBarButtonsToAdd: [
-      {
-        name: 'Reset to Aerial (Top-Down) View',
-        icon: Plotly.Icons.home,
-        click: function (gd) {
-          Plotly.relayout(gd, {
-            'scene.camera': {
-              eye: { x: 0.0, y: 0.0001, z: 2.1 },
-              up: { x: 0.0, y: 1.0, z: 0.0 },
-              center: { x: 0, y: 0, z: 0 },
-              projection: { type: 'orthographic' }
-            },
-            'scene.zaxis.title.text': '',
-            'scene.zaxis.showticklabels': false,
-            'scene.zaxis.showgrid': false,
-            'scene.zaxis.showline': false
-          })
-        }
-      },
-      {
-        name: '3D Isometric Perspective',
-        icon: Plotly.Icons.camera,
-        click: function (gd) {
-          Plotly.relayout(gd, {
-            'scene.camera': {
-              eye: { x: 1.25, y: -1.35, z: 1.15 },
-              up: { x: 0.0, y: 0.0, z: 1.0 },
-              center: { x: 0, y: 0, z: 0 },
-              projection: { type: 'perspective' }
-            },
-            'scene.zaxis.title.text': 'Elevation Z (mm)',
-            'scene.zaxis.showticklabels': true,
-            'scene.zaxis.showgrid': true,
-            'scene.zaxis.showline': true,
-            'scene.zaxis.linecolor': isDark ? '#4b5563' : '#94a3b8',
-            'scene.zaxis.gridcolor': gridColor
-          })
-        }
-      }
-    ],
-    modeBarButtonsToRemove: ['resetCameraDefault3d', 'resetCameraLastSave3d']
+    doubleClick: false
   }
 
   const traces = [trace]
@@ -1386,6 +1470,11 @@ function render3DSurface (target) {
 
   Plotly.react('chart-container', traces, layout, config).then(() => {
     Plotly.Plots.resize('chart-container')
+    updateAllViewColorbar()
+    const overlay = document.getElementById('chart-loading-overlay')
+    if (overlay) overlay.style.display = 'none'
+  }).catch(err => {
+    console.error('Plotly render error in render3DSurface:', err)
     const overlay = document.getElementById('chart-loading-overlay')
     if (overlay) overlay.style.display = 'none'
   })
@@ -1399,6 +1488,9 @@ function initPointCloudViewer () {
         if (currentResult && currentResult.patches && currentResult.patches[faceIdx]) {
           selectFace(faceIdx)
         }
+      },
+      onCameraUserInteraction: () => {
+        cameraMovedSinceTarget = true
       }
     })
   }
@@ -1431,83 +1523,114 @@ function updateAllViewColorbar () {
   const colorbarEl = document.getElementById('all-view-colorbar')
   if (!colorbarEl) return
 
-  // Only display in whole 3D object / overview view when heatmap is active
+  // Display when heatmap is active and a result is loaded
   const showHeatmap = showHeatmapCheckbox ? showHeatmapCheckbox.checked : true
-  if (currentViewMode !== '3d-object' || !showHeatmap || !currentResult) {
+  if (!showHeatmap || !currentResult) {
     colorbarEl.style.display = 'none'
     return
   }
 
   colorbarEl.style.display = 'flex'
+  colorbarEl.style.flexDirection = 'column'
 
-  const unit = unitSelect ? unitSelect.value : 'µm'
+  const unit = (unitSelect && unitSelect.value) ? unitSelect.value : 'µm'
+  const unitLabel = unit === 'µm' ? '&micro;m' : unit
   const titleEl = document.getElementById('all-colorbar-title')
   if (titleEl) {
-    titleEl.innerHTML = `S<sub>VR</sub> (${unit})`
+    titleEl.innerHTML = `S<sub>vr</sub> (${unitLabel})`
   }
 
   // Update colormap gradient strip according to palette selection
   const stripEl = document.getElementById('all-colorbar-strip')
-  const palette = paletteSelect ? paletteSelect.value : 'Viridis'
+  const palette = paletteSelect ? paletteSelect.value : 'Jet'
   if (stripEl) {
-    if (palette.toLowerCase() === 'jet') {
-      stripEl.classList.remove('viridis')
-      stripEl.classList.add('jet')
+    stripEl.className = 'colorbar-strip ' + palette.toLowerCase()
+  }
+
+  let minVal = 0.0
+  let maxVal = 100.0
+
+  if (currentViewMode === '3d-surface') {
+    // Face Topography View
+    const target = (currentResult.is_3d && activePatchIndex >= 0 && currentResult.patches && currentResult.patches[activePatchIndex])
+      ? currentResult.patches[activePatchIndex]
+      : currentResult
+
+    if (target && target._extractedSurface) {
+      minVal = target._extractedSurface.cmin
+      maxVal = target._extractedSurface.cmax
     } else {
-      stripEl.classList.remove('jet')
-      stripEl.classList.add('viridis')
+      const targetSvr = (target && typeof target.svr_um === 'number') ? target.svr_um : 50.0
+      minVal = targetSvr * 0.5
+      maxVal = targetSvr * 1.5
     }
+  } else {
+    // Whole 3D Object / Part View
+    let svrMin = 0.0
+    let svrMax = 100.0
+    if (pointCloudViewer && typeof pointCloudViewer.getSvrRange === 'function') {
+      const range = pointCloudViewer.getSvrRange()
+      if (range && isFinite(range.min) && isFinite(range.max)) {
+        svrMin = range.min
+        svrMax = range.max
+      }
+    } else if (currentResult) {
+      if (typeof currentResult.best_svr_um === 'number' && typeof currentResult.worst_svr_um === 'number' && currentResult.worst_svr_um > currentResult.best_svr_um) {
+        svrMin = currentResult.best_svr_um
+        svrMax = currentResult.worst_svr_um
+      } else if (typeof currentResult.min_svr_um === 'number' && typeof currentResult.max_svr_um === 'number') {
+        svrMin = currentResult.min_svr_um
+        svrMax = currentResult.max_svr_um
+      } else if (typeof currentResult.svr_um === 'number') {
+        svrMin = currentResult.svr_um * 0.5
+        svrMax = currentResult.svr_um * 1.5
+      }
+    }
+    minVal = svrMin
+    maxVal = svrMax
   }
 
-  // Get S_VR range (in µm) from PointCloudViewer or currentResult
-  let svrMin = 0.0
-  let svrMax = 100.0
-  if (pointCloudViewer && typeof pointCloudViewer.getSvrRange === 'function') {
-    const range = pointCloudViewer.getSvrRange()
-    if (range && isFinite(range.min) && isFinite(range.max)) {
-      svrMin = range.min
-      svrMax = range.max
-    }
-  } else if (currentResult) {
-    if (typeof currentResult.best_svr_um === 'number' && typeof currentResult.worst_svr_um === 'number' && currentResult.worst_svr_um > currentResult.best_svr_um) {
-      svrMin = currentResult.best_svr_um
-      svrMax = currentResult.worst_svr_um
-    } else if (typeof currentResult.min_svr_um === 'number' && typeof currentResult.max_svr_um === 'number') {
-      svrMin = currentResult.min_svr_um
-      svrMax = currentResult.max_svr_um
-    } else if (typeof currentResult.svr_um === 'number') {
-      svrMin = currentResult.svr_um * 0.5
-      svrMax = currentResult.svr_um * 1.5
-    }
+  if (maxVal <= minVal) {
+    maxVal = minVal + 1.0
   }
 
-  if (svrMax <= svrMin) {
-    svrMax = svrMin + 1.0
-  }
+  const span = maxVal - minVal
 
-  const formatUnitVal = valUm => {
-    if (unit === 'mm') return (valUm / 1000.0).toFixed(3)
-    if (unit === 'in') return (valUm / 25400.0).toFixed(4)
+  const formatTick = valUm => {
+    if (!isFinite(valUm)) return '-'
+    if (unit === 'mm') {
+      const v = valUm / 1000.0
+      const spanMm = span / 1000.0
+      return v.toFixed(spanMm < 0.05 ? 4 : 3)
+    }
+    if (unit === 'in') {
+      const v = valUm / 25400.0
+      const spanIn = span / 25400.0
+      return v.toFixed(spanIn < 0.002 ? 5 : 4)
+    }
     return valUm.toFixed(1)
   }
 
-  const span = svrMax - svrMin
   const t4 = document.getElementById('all-tick-4')
   const t3 = document.getElementById('all-tick-3')
   const t2 = document.getElementById('all-tick-2')
   const t1 = document.getElementById('all-tick-1')
   const t0 = document.getElementById('all-tick-0')
 
-  if (t4) t4.textContent = formatUnitVal(svrMax)
-  if (t3) t3.textContent = formatUnitVal(svrMin + span * 0.75)
-  if (t2) t2.textContent = formatUnitVal(svrMin + span * 0.50)
-  if (t1) t1.textContent = formatUnitVal(svrMin + span * 0.25)
-  if (t0) t0.textContent = formatUnitVal(svrMin)
+  if (t4) t4.textContent = formatTick(maxVal)
+  if (t3) t3.textContent = formatTick(minVal + span * 0.75)
+  if (t2) t2.textContent = formatTick(minVal + span * 0.50)
+  if (t1) t1.textContent = formatTick(minVal + span * 0.25)
+  if (t0) t0.textContent = formatTick(minVal)
 }
 
 if (showHeatmapCheckbox) {
   showHeatmapCheckbox.addEventListener('change', () => {
     const show = showHeatmapCheckbox.checked
+    const robustWrap = document.getElementById('robust-contrast-wrap')
+    if (robustWrap) {
+      robustWrap.style.display = show ? 'flex' : 'none'
+    }
     if (pointCloudViewer && pointCloudViewer.setShowHeatmap) {
       pointCloudViewer.setShowHeatmap(show)
     }
@@ -1616,7 +1739,7 @@ function renderHeatmap (res) {
     showscale: showHeatmap,
     colorbar: showHeatmap ? {
       title: {
-        text: `S_VR (${unit})`,
+        text: `Svr (${unit})`,
         side: 'top',
         font: { size: 11, color: chartText }
       },
@@ -1627,7 +1750,7 @@ function renderHeatmap (res) {
       tickfont: { size: 10, color: chartText }
     } : undefined,
     hovertemplate: showHeatmap
-      ? `Surface X: %{x:.2f} mm<br>Surface Y: %{y:.2f} mm<br>Local S_VR: %{z:${unit === 'µm' ? '.1f' : (unit === 'mm' ? '.3f' : '.4f')}} ${unit}<extra></extra>`
+      ? `Surface X: %{x:.2f} mm<br>Surface Y: %{y:.2f} mm<br>Local Svr: %{z:${unit === 'µm' ? '.1f' : (unit === 'mm' ? '.3f' : '.4f')}} ${unit}<extra></extra>`
       : `Surface X: %{x:.2f} mm<br>Surface Y: %{y:.2f} mm<extra></extra>`
   }
 
@@ -1689,21 +1812,24 @@ function renderHeatmap (res) {
 
 function renderVariogram (target) {
   const isDark = getTheme() === 'dark'
-  const chartBg = isDark ? '#1d2026' : '#ffffff'
-  const chartText = isDark ? '#c7cbd3' : '#0f172a'
-  const chartGrid = isDark ? '#282c35' : '#e2e8f0'
-  const tickColor = isDark ? '#8e94a0' : '#475569'
+  const chartBg = isDark ? '#1a1d25' : '#ffffff'
+  const chartText = isDark ? '#9ca3af' : '#515154'
+  const chartGrid = isDark ? 'rgba(255, 255, 255, 0.07)' : 'rgba(0, 0, 0, 0.06)'
+  const tickColor = isDark ? '#6b7280' : '#86868b'
   const unit = unitSelect ? unitSelect.value : 'µm'
   const varSectionTitle = document.getElementById('var-section-title')
   const varChartElem = document.getElementById('variogram-chart')
+  const varCard = document.getElementById('variogram-card')
 
-  // The variogram is turned off for Part Overview mode
+  // The variogram is turned off for Part Overview mode (hiding container and border)
   if (!currentResult || (currentResult.is_3d && activePatchIndex === -1)) {
+    if (varCard) varCard.style.display = 'none'
     if (varSectionTitle) varSectionTitle.style.display = 'none'
     if (varChartElem) varChartElem.style.display = 'none'
     return
   }
 
+  if (varCard) varCard.style.display = 'block'
   if (varSectionTitle) varSectionTitle.style.display = 'block'
   if (varChartElem) varChartElem.style.display = 'block'
 
@@ -1743,8 +1869,8 @@ function renderVariogram (target) {
   }
 
   const layout = {
-    height: 155,
-    margin: { l: 45, r: 12, t: 8, b: 30 },
+    height: 165,
+    margin: { l: 45, r: 12, t: 8, b: 38 },
     showlegend: false,
     xaxis: {
       title: { text: 'Bucket d (mm)', font: { size: 9, color: chartText } },
@@ -1783,11 +1909,16 @@ function renderVariogram (target) {
 }
 
 // Event Listeners
-dropzone.addEventListener('click', () => {
+dropzone.addEventListener('click', e => {
+  if (isAnalyzing) return
+  if (e && e.target && (e.target.closest('.sample-chip') || e.target.closest('#dropzone-browse-btn') || e.target.closest('.hero-samples-section') || e.target.closest('.dropzone-standards-bar'))) {
+    return
+  }
   fileInput.value = ''
   fileInput.click()
 })
 dropzone.addEventListener('keydown', e => {
+  if (isAnalyzing) return
   if (e.key === 'Enter' || e.key === ' ') {
     e.preventDefault()
     fileInput.value = ''
@@ -1797,11 +1928,13 @@ dropzone.addEventListener('keydown', e => {
 if (dropzoneReplaceBtn) {
   dropzoneReplaceBtn.addEventListener('click', e => {
     e.stopPropagation()
+    if (isAnalyzing) return
     fileInput.value = ''
     fileInput.click()
   })
 }
 fileInput.addEventListener('change', e => {
+  if (isAnalyzing) return
   if (e.target.files && e.target.files.length > 0) {
     handleFileSelect(e.target.files[0])
   }
@@ -1816,14 +1949,21 @@ function handleMiniPreviewClick (e) {
     if (e.preventDefault) e.preventDefault()
     if (e.stopPropagation) e.stopPropagation()
   }
-  if (!currentResult || !currentResult.patches) return
+  if (!currentResult) return
+  if (!currentResult.is_3d || !currentResult.patches) {
+    selectOverview()
+    return
+  }
   const faceIdx = activePatchIndex >= 0 ? activePatchIndex : 0
 
-  selectOverview({ keepCamera: true })
+  selectOverview({ keepCamera: true, keepHighlight: true, keepTarget: true })
   if (pointCloudViewer) {
     pointCloudViewer.setActivePatch(-1)
     pointCloudViewer.alignToFace(faceIdx)
   }
+  targetedFaceIndex = faceIdx
+  cameraMovedSinceTarget = false
+  updateTableRowHighlight(faceIdx)
 }
 
 if (shapeMiniPreviewElem) {
@@ -1843,15 +1983,90 @@ dropzone.addEventListener('dragleave', () =>
 dropzone.addEventListener('drop', e => {
   e.preventDefault()
   dropzone.classList.remove('dragover')
+  if (isAnalyzing) return
   if (e.dataTransfer.files.length > 0) {
     handleFileSelect(e.dataTransfer.files[0])
   }
 })
 
-// Unit or visualization switch updates instantly
-unitSelect.addEventListener('change', () => {
-  if (currentResult) renderResults(currentResult)
+// Unit conversion updates numerical values in-place without resetting camera, face selection, or viewport
+function updateUnitDisplay () {
+  const unit = unitSelect ? unitSelect.value : 'µm'
+
+  // 1. Update unit tag on Verdict Card
+  const unitTag = document.getElementById('verdict-unit-tag')
+  if (unitTag) unitTag.textContent = unit
+
+  if (!currentResult) {
+    updateAllViewColorbar()
+    return
+  }
+
+  // 2. Update KPI Card numbers according to current mode without resetting camera or view
+  if (currentResult.is_3d && activePatchIndex >= 0 && currentResult.patches && currentResult.patches[activePatchIndex]) {
+    // Face Inspection mode (deep dive into specific face)
+    const patch = currentResult.patches[activePatchIndex]
+    if (kpiSvr) kpiSvr.textContent = formatValNum(patch.svr_um, unit)
+    if (secVal1) secVal1.textContent = formatVal(patch.sa_um, unit)
+    if (secVal2) secVal2.textContent = formatVal(patch.sq_um, unit)
+  } else if (currentResult.is_3d) {
+    // Whole Part Overview mode
+    let worstPatch = null
+    let maxVal = -1
+    if (currentResult.patches && currentResult.patches.length > 0) {
+      currentResult.patches.forEach(p => {
+        if (typeof p.svr_um === 'number' && p.svr_um > maxVal) {
+          maxVal = p.svr_um
+          worstPatch = p
+        }
+      })
+    }
+    if (kpiSvr) kpiSvr.textContent = formatValNum(currentResult.worst_svr_um || (worstPatch ? worstPatch.svr_um : 0), unit)
+    if (secVal1) secVal1.textContent = worstPatch ? formatVal(worstPatch.sa_um, unit) : '-'
+    if (secVal2) secVal2.textContent = worstPatch ? formatVal(worstPatch.sq_um, unit) : '-'
+    if (secVal3) secVal3.textContent = formatVal(currentResult.worst_svr_um || (worstPatch ? worstPatch.svr_um : 0), unit)
+    if (secVal4) secVal4.textContent = formatVal(currentResult.mean_svr_um || 0, unit)
+  } else {
+    // Single Surface mode
+    if (kpiSvr) kpiSvr.textContent = formatValNum(currentResult.svr_um, unit)
+    if (secVal1) secVal1.textContent = formatVal(currentResult.sa_um, unit)
+    if (secVal2) secVal2.textContent = formatVal(currentResult.sq_um, unit)
+  }
+
+  // 3. Update Svr in the Faces Table (if present) without re-rendering rows
+  if (facesTbody && currentResult.is_3d && currentResult.patches) {
+    currentResult.patches.forEach((patch, idx) => {
+      const row = facesTbody.querySelector(`tr[data-patch-idx="${idx}"]`)
+      if (row && row.cells && row.cells[3]) {
+        row.cells[3].innerHTML = `<strong>${formatVal(patch.svr_um, unit)}</strong>`
+      }
+    })
+  }
+
+  // 4. Update Colorbar Legend Overlay
   updateAllViewColorbar()
+
+  // 5. If in 3D topography mode, update hovertemplate on Plotly without touching camera
+  if (currentViewMode === '3d-surface') {
+    const chartContainer = document.getElementById('chart-container')
+    if (chartContainer && chartContainer.data && chartContainer.data.length > 0) {
+      const showHeatmap = showHeatmapCheckbox ? showHeatmapCheckbox.checked : true
+      const target = (currentResult.is_3d && activePatchIndex >= 0 && currentResult.patches && currentResult.patches[activePatchIndex])
+        ? currentResult.patches[activePatchIndex]
+        : currentResult
+      const hover = showHeatmap
+        ? `Surface X: %{x:.2f} mm<br>Surface Y: %{y:.2f} mm<br>Elevation Z: %{customdata:.1f} µm<br>Local Svr: %{marker.color:.1f} µm<extra></extra>`
+        : `${target.name || 'Face'}<br>Surface X: %{x:.2f} mm<br>Surface Y: %{y:.2f} mm<br>Elevation Z: %{customdata:.1f} µm<extra></extra>`
+      try {
+        Plotly.restyle(chartContainer, { hovertemplate: [hover] }, [0])
+      } catch (err) {}
+    }
+  }
+}
+
+// Unit switch updates numbers in-place without resetting camera or view
+unitSelect.addEventListener('change', () => {
+  updateUnitDisplay()
 })
 paletteSelect.addEventListener('change', () => {
   if (pointCloudViewer && pointCloudViewer.setPalette) {
@@ -1975,18 +2190,32 @@ document.querySelectorAll('.point-size-stop').forEach(stopEl => {
   }
 )
 
-// Tab Switching
+// Tab Switching & Data Drawer Toggle
 document.querySelectorAll('.tab-btn').forEach(btn => {
-  btn.addEventListener('click', () => {
-    document
-      .querySelectorAll('.tab-btn')
-      .forEach(b => b.classList.remove('active'))
-    document
-      .querySelectorAll('.tab-content')
-      .forEach(c => c.classList.remove('active'))
-    btn.classList.add('active')
-    const targetContent = document.getElementById(btn.dataset.tab)
-    if (targetContent) targetContent.classList.add('active')
+  btn.addEventListener('click', e => {
+    e.stopPropagation()
+    const tabId = btn.dataset.tab
+    const isAlreadyActive = btn.classList.contains('active')
+    const dock = document.getElementById('bottom-dock')
+    const isExpanded = dock ? dock.classList.contains('expanded') : false
+
+    if (isAlreadyActive && isExpanded) {
+      // Clicked active tab while expanded -> collapse!
+      if (dock) dock.classList.remove('expanded')
+    } else {
+      // Switch tab and expand
+      document
+        .querySelectorAll('.tab-btn')
+        .forEach(b => b.classList.remove('active'))
+      document
+        .querySelectorAll('.tab-content')
+        .forEach(c => c.classList.remove('active'))
+      btn.classList.add('active')
+      const targetContent = document.getElementById(tabId)
+      if (targetContent) targetContent.classList.add('active')
+      if (dock) dock.classList.add('expanded')
+    }
+    window.dispatchEvent(new Event('resize'))
   })
 })
 
@@ -2003,14 +2232,19 @@ downloadBtn.addEventListener('click', () => {
   URL.revokeObjectURL(url)
 })
 
-// Example SCRATA Samples Loader
+// Reference Standards Loader
 async function loadSampleScan (fileName) {
+  if (isAnalyzing) return
   try {
-    const sampleSelect = document.getElementById('sample-select')
-    if (sampleSelect) {
-      sampleSelect.value = fileName
-    }
-    document.querySelectorAll('.sample-btn').forEach(btn => {
+    isAnalyzing = true
+    setProcessingUploadVisibility(true, fileName)
+
+    const benchmarksPopover = document.getElementById('benchmarks-popover')
+    if (benchmarksPopover) benchmarksPopover.style.display = 'none'
+    const benchmarksBtn = document.getElementById('benchmarks-btn')
+    if (benchmarksBtn) benchmarksBtn.classList.remove('active')
+
+    document.querySelectorAll('.sample-btn, .sample-chip').forEach(btn => {
       btn.classList.toggle('active', btn.getAttribute('data-sample') === fileName)
     })
 
@@ -2022,7 +2256,7 @@ async function loadSampleScan (fileName) {
     targetPercent = 25
     if (progressBar) progressBar.style.display = 'block'
     if (progressFill) progressFill.style.width = '10%'
-    setProgress(20, `Fetching sample ${fileName}...`)
+    setProgress(20, `Fetching reference standard ${fileName}...`)
     if (statusDot) statusDot.className = 'status-dot analyzing'
 
     if (resultsContainer && resultsContainer.style.display !== 'none') {
@@ -2040,8 +2274,12 @@ async function loadSampleScan (fileName) {
     const file = new File([blob], fileName, { type: 'application/octet-stream' })
     file.isSampleScan = true
 
+    // Note: handleFileSelect will startAnalysis
+    isAnalyzing = false
     handleFileSelect(file)
   } catch (err) {
+    isAnalyzing = false
+    setProcessingUploadVisibility(false)
     const sampleSelect = document.getElementById('sample-select')
     if (sampleSelect) {
       sampleSelect.selectedIndex = 0
@@ -2054,19 +2292,12 @@ async function loadSampleScan (fileName) {
   }
 }
 
-// Attach listener to sample dropdown selector
-const sampleSelectElem = document.getElementById('sample-select')
-if (sampleSelectElem) {
-  sampleSelectElem.addEventListener('change', e => {
-    const sample = e.target.value
-    if (sample) loadSampleScan(sample)
-  })
-}
-
 // Attach listeners to any trigger buttons with data-sample attribute
 document.querySelectorAll('[data-sample]').forEach(btn => {
   btn.addEventListener('click', e => {
     e.preventDefault()
+    e.stopPropagation()
+    if (isAnalyzing) return
     const sample = btn.getAttribute('data-sample')
     if (sample) loadSampleScan(sample)
   })
@@ -2075,16 +2306,9 @@ document.querySelectorAll('[data-sample]').forEach(btn => {
 // Initialize on page load
 initTheme()
 initWorker()
-if (sampleSelectElem) {
-  sampleSelectElem.selectedIndex = 0
-  sampleSelectElem.value = ''
+if (unitSelect) {
+  unitSelect.value = 'µm'
 }
-window.addEventListener('pageshow', () => {
-  if (sampleSelectElem && !selectedFile) {
-    sampleSelectElem.selectedIndex = 0
-    sampleSelectElem.value = ''
-  }
-})
 
 window.addEventListener('resize', () => {
   const chartContainer = document.getElementById('chart-container')
@@ -2123,3 +2347,292 @@ if (window.ResizeObserver) {
     ro.observe(kpiEl)
   }
 }
+
+// Workbench UI Controls & Interaction Wire-up
+const openScanBtn = document.getElementById('open-scan-btn')
+if (openScanBtn && fileInput) {
+  openScanBtn.addEventListener('click', () => {
+    if (isAnalyzing) return
+    fileInput.click()
+  })
+}
+
+const dropzoneBrowseBtn = document.getElementById('dropzone-browse-btn')
+if (dropzoneBrowseBtn && fileInput) {
+  dropzoneBrowseBtn.addEventListener('click', e => {
+    e.stopPropagation()
+    if (isAnalyzing) return
+    fileInput.click()
+  })
+}
+
+// Settings, Benchmarks & Export Popovers
+const settingsToggleBtn = document.getElementById('settings-toggle-btn')
+const settingsPopover = document.getElementById('settings-popover')
+const settingsCloseBtn = document.getElementById('settings-close-btn')
+const benchmarksBtn = document.getElementById('benchmarks-btn')
+const benchmarksPopover = document.getElementById('benchmarks-popover')
+const benchmarksCloseBtn = document.getElementById('benchmarks-close-btn')
+const exportBtn = document.getElementById('export-btn')
+const exportPopover = document.getElementById('export-popover')
+const exportCloseBtn = document.getElementById('export-close-btn')
+
+function closeAllPopovers () {
+  if (settingsPopover) settingsPopover.style.display = 'none'
+  if (settingsToggleBtn) settingsToggleBtn.classList.remove('active')
+  if (benchmarksPopover) benchmarksPopover.style.display = 'none'
+  if (benchmarksBtn) benchmarksBtn.classList.remove('active')
+  if (exportPopover) exportPopover.style.display = 'none'
+  if (exportBtn) exportBtn.classList.remove('active')
+}
+
+if (settingsToggleBtn && settingsPopover) {
+  settingsToggleBtn.addEventListener('click', e => {
+    e.stopPropagation()
+    const isOpen = settingsPopover.style.display !== 'none'
+    closeAllPopovers()
+    if (!isOpen) {
+      settingsPopover.style.display = 'block'
+      settingsToggleBtn.classList.add('active')
+    }
+  })
+}
+
+if (settingsCloseBtn && settingsPopover) {
+  settingsCloseBtn.addEventListener('click', () => {
+    settingsPopover.style.display = 'none'
+    if (settingsToggleBtn) settingsToggleBtn.classList.remove('active')
+  })
+}
+
+if (benchmarksBtn && benchmarksPopover) {
+  benchmarksBtn.addEventListener('click', e => {
+    e.stopPropagation()
+    const isOpen = benchmarksPopover.style.display !== 'none'
+    closeAllPopovers()
+    if (!isOpen) {
+      benchmarksPopover.style.display = 'block'
+      benchmarksBtn.classList.add('active')
+    }
+  })
+}
+
+if (benchmarksCloseBtn && benchmarksPopover) {
+  benchmarksCloseBtn.addEventListener('click', () => {
+    benchmarksPopover.style.display = 'none'
+    if (benchmarksBtn) benchmarksBtn.classList.remove('active')
+  })
+}
+
+if (exportBtn && exportPopover) {
+  exportBtn.addEventListener('click', e => {
+    e.stopPropagation()
+    if (exportBtn.disabled || isAnalyzing) return
+    const isOpen = exportPopover.style.display !== 'none'
+    closeAllPopovers()
+    if (!isOpen) {
+      exportPopover.style.display = 'block'
+      exportBtn.classList.add('active')
+    }
+  })
+}
+
+if (exportCloseBtn && exportPopover) {
+  exportCloseBtn.addEventListener('click', () => {
+    exportPopover.style.display = 'none'
+    if (exportBtn) exportBtn.classList.remove('active')
+  })
+}
+
+document.addEventListener('click', e => {
+  if (settingsPopover && settingsPopover.style.display !== 'none') {
+    if (!settingsPopover.contains(e.target) && e.target !== settingsToggleBtn && !settingsToggleBtn.contains(e.target)) {
+      settingsPopover.style.display = 'none'
+      if (settingsToggleBtn) settingsToggleBtn.classList.remove('active')
+    }
+  }
+  if (benchmarksPopover && benchmarksPopover.style.display !== 'none') {
+    if (!benchmarksPopover.contains(e.target) && e.target !== benchmarksBtn && !benchmarksBtn.contains(e.target)) {
+      benchmarksPopover.style.display = 'none'
+      if (benchmarksBtn) benchmarksBtn.classList.remove('active')
+    }
+  }
+  if (exportPopover && exportPopover.style.display !== 'none') {
+    if (!exportPopover.contains(e.target) && e.target !== exportBtn && !exportBtn.contains(e.target)) {
+      exportPopover.style.display = 'none'
+      if (exportBtn) exportBtn.classList.remove('active')
+    }
+  }
+})
+
+// Export Action Handlers
+function downloadDataUri (dataUri, filename) {
+  const a = document.createElement('a')
+  a.href = dataUri
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+}
+
+const exportReportAction = document.getElementById('export-report-action')
+if (exportReportAction) {
+  exportReportAction.addEventListener('click', () => {
+    if (!currentResult) return
+    if (exportPopover) exportPopover.style.display = 'none'
+    if (exportBtn) exportBtn.classList.remove('active')
+    const blob = new Blob([currentResult.report_text || ''], { type: 'text/plain;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const baseName = (currentResult.effective_name || selectedFile?.name || 'scan').replace(/\.[^/.]+$/, '')
+    downloadDataUri(url, `${baseName}_metrology_report.txt`)
+    URL.revokeObjectURL(url)
+  })
+}
+
+const exportCsvAction = document.getElementById('export-csv-action')
+if (exportCsvAction) {
+  exportCsvAction.addEventListener('click', () => {
+    if (!currentResult) return
+    if (exportPopover) exportPopover.style.display = 'none'
+    if (exportBtn) exportBtn.classList.remove('active')
+
+    const unit = unitSelect ? unitSelect.value : 'µm'
+    const rows = [
+      ['Target Surface', 'Width (mm)', 'Height (mm)', 'Surface Area (mm²)', `Svr (${unit})`, `Sa (${unit})`, `Sq (${unit})`, 'SCRATA Equivalent']
+    ]
+
+    if (currentResult.patches && currentResult.patches.length > 0) {
+      currentResult.patches.forEach((patch, idx) => {
+        const name = patch.name || `Face ${idx + 1}`
+        const w = patch.width_mm ? patch.width_mm.toFixed(2) : '-'
+        const h = patch.height_mm ? patch.height_mm.toFixed(2) : '-'
+        const area = (patch.area_mm2 || (patch.width_mm && patch.height_mm ? patch.width_mm * patch.height_mm : 0)).toFixed(1)
+        const svr = (unit === 'mm' ? (patch.svr_um / 1000).toFixed(4) : (unit === 'in' ? (patch.svr_um / 25400).toFixed(5) : patch.svr_um.toFixed(2)))
+        const sa = (patch.sa_um ? (unit === 'mm' ? (patch.sa_um / 1000).toFixed(4) : (unit === 'in' ? (patch.sa_um / 25400).toFixed(5) : patch.sa_um.toFixed(2))) : '-')
+        const sq = (patch.sq_um ? (unit === 'mm' ? (patch.sq_um / 1000).toFixed(4) : (unit === 'in' ? (patch.sq_um / 25400).toFixed(5) : patch.sq_um.toFixed(2))) : '-')
+        const scrata = patch.scrata_rating || '-'
+        rows.push([name, w, h, area, svr, sa, sq, scrata])
+      })
+    } else {
+      const name = currentResult.effective_name || 'Primary Surface'
+      const area = currentResult.area_mm2 ? currentResult.area_mm2.toFixed(1) : '-'
+      const svr = (unit === 'mm' ? (currentResult.svr_um / 1000).toFixed(4) : (unit === 'in' ? (currentResult.svr_um / 25400).toFixed(5) : currentResult.svr_um.toFixed(2)))
+      const sa = (currentResult.sa_um ? (unit === 'mm' ? (currentResult.sa_um / 1000).toFixed(4) : (unit === 'in' ? (currentResult.sa_um / 25400).toFixed(5) : currentResult.sa_um.toFixed(2))) : '-')
+      const sq = (currentResult.sq_um ? (unit === 'mm' ? (currentResult.sq_um / 1000).toFixed(4) : (unit === 'in' ? (currentResult.sq_um / 25400).toFixed(5) : currentResult.sq_um.toFixed(2))) : '-')
+      const scrata = currentResult.scrata_rating || '-'
+      rows.push([name, '-', '-', area, svr, sa, sq, scrata])
+    }
+
+    const csvContent = rows.map(r => r.map(c => `"${c}"`).join(',')).join('\n')
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const baseName = (currentResult.effective_name || selectedFile?.name || 'scan').replace(/\.[^/.]+$/, '')
+    downloadDataUri(url, `${baseName}_surface_metrics.csv`)
+    URL.revokeObjectURL(url)
+  })
+}
+
+const exportPngAction = document.getElementById('export-png-action')
+if (exportPngAction) {
+  exportPngAction.addEventListener('click', () => {
+    if (!currentResult) return
+    if (exportPopover) exportPopover.style.display = 'none'
+    if (exportBtn) exportBtn.classList.remove('active')
+
+    const baseName = (currentResult.effective_name || selectedFile?.name || 'scan').replace(/\.[^/.]+$/, '')
+    if (currentViewMode === '3d-object') {
+      if (pointCloudViewer && typeof pointCloudViewer.getScreenshotDataURL === 'function') {
+        const dataUrl = pointCloudViewer.getScreenshotDataURL()
+        downloadDataUri(dataUrl, `${baseName}_3d_model.png`)
+      }
+    } else {
+      const chartElem = document.getElementById('chart-container')
+      if (window.Plotly && chartElem) {
+        Plotly.toImage(chartElem, { format: 'png', width: 1920, height: 1080 })
+          .then(dataUrl => {
+            downloadDataUri(dataUrl, `${baseName}_topography.png`)
+          })
+          .catch(err => {
+            console.error('Snapshot capture error:', err)
+          })
+      }
+    }
+  })
+}
+
+// CAD Stepper Number Inputs
+document.querySelectorAll('.stepper-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const targetId = btn.dataset.target
+    const input = document.getElementById(targetId)
+    if (!input) return
+    const step = parseFloat(input.step) || 1
+    const min = input.min !== '' ? parseFloat(input.min) : -Infinity
+    const max = input.max !== '' ? parseFloat(input.max) : Infinity
+    let val = parseFloat(input.value) || 0
+    if (btn.classList.contains('stepper-inc')) {
+      val = Math.min(max, +(val + step).toFixed(4))
+    } else {
+      val = Math.max(min, +(val - step).toFixed(4))
+    }
+    input.value = val
+    input.dispatchEvent(new Event('change'))
+  })
+})
+
+// Unified HUD Camera Reset / Reorient
+const hudCamReset = document.getElementById('hud-cam-reset')
+if (hudCamReset) {
+  hudCamReset.addEventListener('click', () => {
+    if (currentViewMode === '3d-object') {
+      if (pointCloudViewer) {
+        pointCloudViewer.setCameraView('iso')
+      }
+    } else if (currentViewMode === '3d-surface') {
+      const chartElem = document.getElementById('chart-container')
+      if (window.Plotly && chartElem) {
+        Plotly.relayout(chartElem, {
+          'scene.camera': {
+            eye: { x: 0.0, y: 0.0001, z: 2.1 },
+            up: { x: 0.0, y: 1.0, z: 0.0 },
+            center: { x: 0, y: 0, z: 0 },
+            projection: { type: 'orthographic' }
+          }
+        })
+      }
+    }
+  })
+}
+
+// Collapsible Bottom Data Dock
+const dockToggleBtn = document.getElementById('dock-toggle-btn')
+const bottomDock = document.getElementById('bottom-dock')
+const dockHeader = document.querySelector('.dock-header')
+
+if (dockToggleBtn && bottomDock) {
+  dockToggleBtn.addEventListener('click', e => {
+    e.stopPropagation()
+    bottomDock.classList.toggle('expanded')
+    window.dispatchEvent(new Event('resize'))
+  })
+}
+
+if (dockHeader && bottomDock) {
+  dockHeader.addEventListener('click', e => {
+    if (e.target.closest('.tab-btn') || e.target.closest('.dock-arrow-btn')) return
+    bottomDock.classList.toggle('expanded')
+    window.dispatchEvent(new Event('resize'))
+  })
+}
+
+// Window-wide drag and drop for scan files onto the 3D canvas
+window.addEventListener('dragover', e => {
+  e.preventDefault()
+})
+window.addEventListener('drop', e => {
+  e.preventDefault()
+  if (isAnalyzing) return
+  if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+    handleFileSelect(e.dataTransfer.files[0])
+  }
+})
