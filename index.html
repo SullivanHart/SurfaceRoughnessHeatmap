@@ -276,6 +276,18 @@
               <span id="point-size-val" style="display: none;">0.5</span>
             </div>
 
+            <!-- Z-Scale Elevation Exaggeration (Face Inspection View) -->
+            <div class="hud-sep" id="z-scale-sep" style="display: none;"></div>
+            <div class="hud-group" id="z-scale-group" style="display: none;" title="Z-axis vertical elevation exaggeration for surface micro-texture">
+              <span class="hud-label">Z-Scale</span>
+              <div id="z-scale-stops" class="segmented-control" role="radiogroup" aria-label="Z Exaggeration">
+                <button type="button" class="z-scale-stop active" data-zscale="1" aria-label="1x elevation">1&times;</button>
+                <button type="button" class="z-scale-stop" data-zscale="10" aria-label="10x elevation">10&times;</button>
+                <button type="button" class="z-scale-stop" data-zscale="25" aria-label="25x elevation">25&times;</button>
+                <button type="button" class="z-scale-stop" data-zscale="50" aria-label="50x elevation">50&times;</button>
+              </div>
+            </div>
+
             <div class="hud-sep"></div>
 
             <!-- Display Toggles -->
@@ -284,9 +296,9 @@
                 <input type="checkbox" id="show-heatmap" checked />
                 <span>Heatmap</span>
               </label>
-              <label class="hud-toggle" id="robust-contrast-wrap" title="Robust contrast (1st–99th percentile)">
+              <label class="hud-toggle" id="robust-contrast-wrap" title="Robust contrast clamp (2nd–98th percentile)">
                 <input type="checkbox" id="robust-contrast" checked />
-                <span>1&ndash;99%</span>
+                <span>2&ndash;98%</span>
               </label>
               <label class="hud-toggle" title="Show edge and unassigned perimeter points">
                 <input type="checkbox" id="show-unassigned" checked />

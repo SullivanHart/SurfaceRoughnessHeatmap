@@ -39,8 +39,11 @@ let targetedFaceIndex = -1
 let cameraMovedSinceTarget = false
 let previousViewMode = null
 let pointCloudMarkerSize = 0.5
+let currentZExaggeration = 1.0
 let pointCloudViewer = null
 let lastLoadedResult = null
+let lastRenderedFaceKey = null
+const surfaceCameraMap = new Map()
 const FACE_PALETTE = [
   '#c8102e', // Cardinal Red
   '#2563eb', // Royal Blue
@@ -522,6 +525,8 @@ function formatVal (valUm, unit) {
 
 function renderResults (res) {
   currentResult = res
+  surfaceCameraMap.clear()
+  lastRenderedFaceKey = null
   if (emptyState) emptyState.style.display = 'none'
   if (resultsContainer) {
     resultsContainer.style.display = 'block'
@@ -688,7 +693,7 @@ function render3DFaces (res) {
   currentViewMode = '3d-object'
   targetedFaceIndex = -1
   cameraMovedSinceTarget = false
-  selectOverview()
+  selectOverview({ resetCamera: true })
 
   // Warm up surface point grids in idle time so face switching is instant
   const warmUp = () => {
@@ -724,12 +729,9 @@ function handleTableRowClick (idx) {
 
   // Row -1: Whole Part / Overview row
   if (idx === -1) {
-    selectOverview()
+    selectOverview({ keepCamera: true })
     targetedFaceIndex = -1
     cameraMovedSinceTarget = false
-    if (pointCloudViewer) {
-      pointCloudViewer.setCameraView('iso')
-    }
     return
   }
 
@@ -809,7 +811,7 @@ function selectOverview (options = {}) {
 
   if (pointCloudViewer) {
     pointCloudViewer.setActivePatch(-1)
-    if (!options || !options.keepCamera) {
+    if (options && options.resetCamera) {
       pointCloudViewer.setCameraView('iso')
     }
   }
@@ -1026,7 +1028,11 @@ function updateActiveChart () {
   const loadingOverlay = document.getElementById('chart-loading-overlay')
 
   // Show/hide appropriate viewer element and dispatch render
+  const zScaleGroup = document.getElementById('z-scale-group')
+  const zScaleSep = document.getElementById('z-scale-sep')
   if (currentViewMode === '3d-object') {
+    if (zScaleGroup) zScaleGroup.style.display = 'none'
+    if (zScaleSep) zScaleSep.style.display = 'none'
     if (chartContainer) chartContainer.style.display = 'none'
     if (loadingOverlay) loadingOverlay.style.display = 'none'
     if (pcCanvas) pcCanvas.style.display = 'block'
@@ -1041,6 +1047,8 @@ function updateActiveChart () {
     }
     updateAllViewColorbar()
   } else {
+    if (zScaleGroup) zScaleGroup.style.display = 'flex'
+    if (zScaleSep) zScaleSep.style.display = 'block'
     updateAllViewColorbar()
     const kpiCardElem = document.getElementById('kpi-card')
     const chartCardElem = document.querySelector('.chart-card')
@@ -1223,7 +1231,7 @@ function getOrExtractSurfaceData (target, unit, robust) {
   if (!svrGrid || !Array.isArray(svrGrid) || svrGrid.length === 0) return null
 
   let cached = target._extractedSurface
-  if (cached && cached.unit === unit && cached.robust === robust) {
+  if (cached && cached.unit === unit && cached.robust === robust && cached.zExaggeration === currentZExaggeration) {
     return cached
   }
 
@@ -1275,7 +1283,7 @@ function getOrExtractSurfaceData (target, unit, robust) {
       const hasS = typeof sRaw === 'number' && !isNaN(sRaw)
 
       if (hasZ && hasS) {
-        const zMm = zRaw * zMultiplier
+        const zMm = zRaw * zMultiplier * currentZExaggeration
         const sConverted = sRaw * svrMultiplier
 
         if (sConverted < minVal) minVal = sConverted
@@ -1291,7 +1299,7 @@ function getOrExtractSurfaceData (target, unit, robust) {
       } else if (hasZ && isSampleRow && (c % stride === 0)) {
         invalidX.push(xVal)
         invalidY.push(yVal)
-        invalidZ.push(zRaw * zMultiplier)
+        invalidZ.push(zRaw * zMultiplier * currentZExaggeration)
       }
     }
   }
@@ -1303,7 +1311,7 @@ function getOrExtractSurfaceData (target, unit, robust) {
       if (Array.isArray(pt) && pt.length >= 3) {
         invalidX.push(pt[0])
         invalidY.push(pt[1])
-        invalidZ.push(pt[2])
+        invalidZ.push(pt[2] * currentZExaggeration)
       }
     }
   }
@@ -1312,16 +1320,36 @@ function getOrExtractSurfaceData (target, unit, robust) {
   let cmax = isFinite(maxVal) ? maxVal : 1
   if (robust && flatValues && flatValues.length > 20) {
     flatValues.sort((a, b) => a - b)
-    cmin = flatValues[Math.floor(flatValues.length * 0.01)]
-    cmax = flatValues[Math.floor(flatValues.length * 0.99)]
+    cmin = flatValues[Math.floor(flatValues.length * 0.02)]
+    cmax = flatValues[Math.floor(flatValues.length * 0.98)]
   }
   if (cmax <= cmin) {
     cmax = cmin + 1.0
   }
 
-  const res = { validX, validY, validZ, validZUm, validIntensity, invalidX, invalidY, invalidZ, cmin, cmax, unit, robust, numRows, numCols, pitch, stride }
+  const res = { validX, validY, validZ, validZUm, validIntensity, invalidX, invalidY, invalidZ, cmin, cmax, unit, robust, zExaggeration: currentZExaggeration, numRows, numCols, pitch, stride }
   target._extractedSurface = res
   return res
+}
+
+function getCurrentPlotlyCamera (container) {
+  if (!container) return null
+  if (container._fullLayout && container._fullLayout.scene) {
+    const sc = container._fullLayout.scene
+    if (sc._scene && typeof sc._scene.getCamera === 'function') {
+      try {
+        const cam = sc._scene.getCamera()
+        if (cam && cam.eye) return cam
+      } catch (e) {}
+    }
+    if (sc.camera && sc.camera.eye) {
+      return sc.camera
+    }
+  }
+  if (container.layout && container.layout.scene && container.layout.scene.camera) {
+    return container.layout.scene.camera
+  }
+  return null
 }
 
 function render3DSurface (target) {
@@ -1385,6 +1413,13 @@ function render3DSurface (target) {
   const ySpan = (numRows > 1 ? (numRows - 1) * pitch : 1)
   const aspectY = Math.max(0.2, Math.min(5.0, ySpan / Math.max(1e-3, xSpan)))
 
+  let aspectZ = 0.22
+  if (currentZExaggeration === 1) aspectZ = 0.05
+  else if (currentZExaggeration === 10) aspectZ = 0.14
+  else if (currentZExaggeration === 25) aspectZ = 0.24
+  else if (currentZExaggeration === 50) aspectZ = 0.44
+  else aspectZ = Math.max(0.02, Math.min(0.6, 0.24 * (currentZExaggeration / 25.0)))
+
   const aerialCamera = {
     eye: { x: 0.0, y: 0.0001, z: 2.1 },
     up: { x: 0.0, y: 1.0, z: 0.0 },
@@ -1406,14 +1441,38 @@ function render3DSurface (target) {
     chartContainerElem.style.height = `${targetHeight}px`
   }
 
+  const currentFaceKey = (currentResult && currentResult.is_3d && activePatchIndex >= 0)
+    ? `patch_${activePatchIndex}`
+    : 'single_surface'
+
+  // Preserve user camera orientation across actions on this face
+  if (lastRenderedFaceKey && chartContainerElem) {
+    const liveCam = getCurrentPlotlyCamera(chartContainerElem)
+    if (liveCam && liveCam.eye) {
+      surfaceCameraMap.set(lastRenderedFaceKey, {
+        eye: { ...liveCam.eye },
+        up: liveCam.up ? { ...liveCam.up } : { x: 0.0, y: 1.0, z: 0.0 },
+        center: liveCam.center ? { ...liveCam.center } : { x: 0, y: 0, z: 0 },
+        projection: liveCam.projection ? { ...liveCam.projection } : { type: 'orthographic' }
+      })
+    }
+  }
+
+  let cameraToUse = aerialCamera
+  if (surfaceCameraMap.has(currentFaceKey)) {
+    cameraToUse = surfaceCameraMap.get(currentFaceKey)
+  }
+  lastRenderedFaceKey = currentFaceKey
+
   const layout = {
     autosize: true,
     height: targetHeight,
     margin: { l: 40, r: 40, t: 30, b: 40 },
     hovermode: 'closest',
     hoverdistance: 3,
-    uirevision: (target.name || 'surface') + '_' + currentViewMode,
+    uirevision: currentFaceKey,
     scene: {
+      uirevision: currentFaceKey,
       xaxis: {
         title: { text: 'X (mm)', font: { size: 11, color: chartText } },
         color: chartText,
@@ -1448,8 +1507,8 @@ function render3DSurface (target) {
         showspikes: false
       },
       aspectmode: 'manual',
-      aspectratio: { x: 1, y: aspectY, z: 0.22 },
-      camera: aerialCamera
+      aspectratio: { x: 1, y: aspectY, z: aspectZ },
+      camera: cameraToUse
     },
     plot_bgcolor: chartBg,
     paper_bgcolor: chartBg,
@@ -1493,6 +1552,24 @@ function render3DSurface (target) {
     updateAllViewColorbar()
     const overlay = document.getElementById('chart-loading-overlay')
     if (overlay) overlay.style.display = 'none'
+
+    const container = document.getElementById('chart-container')
+    if (container && !container._hasRelayoutCamListener) {
+      container._hasRelayoutCamListener = true
+      container.on('plotly_relayout', eventData => {
+        if (eventData && eventData['scene.camera'] && lastRenderedFaceKey) {
+          const c = eventData['scene.camera']
+          if (c && c.eye) {
+            surfaceCameraMap.set(lastRenderedFaceKey, {
+              eye: { ...c.eye },
+              up: c.up ? { ...c.up } : { x: 0.0, y: 1.0, z: 0.0 },
+              center: c.center ? { ...c.center } : { x: 0, y: 0, z: 0 },
+              projection: c.projection ? { ...c.projection } : { type: 'orthographic' }
+            })
+          }
+        }
+      })
+    }
   }).catch(err => {
     console.error('Plotly render error in render3DSurface:', err)
     const overlay = document.getElementById('chart-loading-overlay')
@@ -1717,8 +1794,8 @@ function renderHeatmap (res) {
   let zmin = flat.length > 0 ? flat[0] : 0
   let zmax = flat.length > 0 ? flat[flat.length - 1] : 1
   if (robust && flat.length > 20) {
-    zmin = flat[Math.floor(flat.length * 0.01)]
-    zmax = flat[Math.floor(flat.length * 0.99)]
+    zmin = flat[Math.floor(flat.length * 0.02)]
+    zmax = flat[Math.floor(flat.length * 0.98)]
   }
 
   // Convert grid units
@@ -2149,7 +2226,7 @@ function setDiscretePointSize (idx, force = false) {
   if (pointSizeVal) {
     pointSizeVal.textContent = sz
   }
-  document.querySelectorAll('.point-size-stop').forEach(s => {
+  document.querySelectorAll('#point-size-stops .point-size-stop').forEach(s => {
     s.classList.toggle('active', s.getAttribute('data-idx') === String(clampedIdx))
   })
 
@@ -2184,7 +2261,7 @@ if (pointSizeWrapper) {
 }
 
 // Click or press Enter/Space directly on .25, .5, 1.0 text labels
-document.querySelectorAll('.point-size-stop').forEach(stopEl => {
+document.querySelectorAll('#point-size-stops .point-size-stop').forEach(stopEl => {
   stopEl.addEventListener('click', e => {
     e.preventDefault()
     e.stopPropagation()
@@ -2197,6 +2274,28 @@ document.querySelectorAll('.point-size-stop').forEach(stopEl => {
       e.stopPropagation()
       const idx = parseInt(stopEl.getAttribute('data-idx'), 10)
       setDiscretePointSize(idx)
+    }
+  })
+})
+
+// Z-Scale elevation exaggeration controls (1x, 10x, 25x, 50x)
+document.querySelectorAll('#z-scale-stops .z-scale-stop').forEach(btn => {
+  btn.addEventListener('click', e => {
+    e.preventDefault()
+    e.stopPropagation()
+    document.querySelectorAll('#z-scale-stops .z-scale-stop').forEach(b => b.classList.remove('active'))
+    btn.classList.add('active')
+    currentZExaggeration = parseFloat(btn.getAttribute('data-zscale')) || 1.0
+    if (currentResult && currentViewMode !== '3d-object') {
+      if (currentResult.patches) currentResult.patches.forEach(p => { p._extractedSurface = null })
+      currentResult._extractedSurface = null
+      updateActiveChart()
+    }
+  })
+  btn.addEventListener('keydown', e => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault()
+      btn.click()
     }
   })
 })
@@ -2609,6 +2708,10 @@ if (hudCamReset) {
         pointCloudViewer.setCameraView('iso')
       }
     } else if (currentViewMode === '3d-surface') {
+      const currentFaceKey = (currentResult && currentResult.is_3d && activePatchIndex >= 0)
+        ? `patch_${activePatchIndex}`
+        : 'single_surface'
+      surfaceCameraMap.delete(currentFaceKey)
       const chartElem = document.getElementById('chart-container')
       if (window.Plotly && chartElem) {
         Plotly.relayout(chartElem, {

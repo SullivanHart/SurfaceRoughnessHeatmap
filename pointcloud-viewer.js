@@ -286,12 +286,18 @@ class PointCloudViewer {
 
         let svrs = patch.sample_svr || patch.sample_svr_f32 || null
         let minS = Infinity, maxS = -Infinity
-        if (svrs) {
+        if (svrs && svrs.length > 0) {
+          const validS = []
           for (let i = 0; i < svrs.length; i++) {
-            if (svrs[i] > 0) {
-              if (svrs[i] < minS) minS = svrs[i]
-              if (svrs[i] > maxS) maxS = svrs[i]
-            }
+            if (svrs[i] > 0) validS.push(svrs[i])
+          }
+          if (validS.length > 20) {
+            validS.sort((a, b) => a - b)
+            minS = validS[Math.floor(validS.length * 0.02)]
+            maxS = validS[Math.floor(validS.length * 0.98)]
+          } else if (validS.length > 0) {
+            minS = Math.min(...validS)
+            maxS = Math.max(...validS)
           }
         }
         if (!svrs || svrs.length !== ptCount) {
@@ -412,13 +418,18 @@ class PointCloudViewer {
         const patches = new Float32Array(ptCount)
         let svrs = result.sample_svr || result.sample_svr_f32 || null
         let minS = Infinity, maxS = -Infinity
-
-        if (svrs) {
+        if (svrs && svrs.length > 0) {
+          const validS = []
           for (let i = 0; i < svrs.length; i++) {
-            if (svrs[i] > 0) {
-              if (svrs[i] < minS) minS = svrs[i]
-              if (svrs[i] > maxS) maxS = svrs[i]
-            }
+            if (svrs[i] > 0) validS.push(svrs[i])
+          }
+          if (validS.length > 20) {
+            validS.sort((a, b) => a - b)
+            minS = validS[Math.floor(validS.length * 0.02)]
+            maxS = validS[Math.floor(validS.length * 0.98)]
+          } else if (validS.length > 0) {
+            minS = Math.min(...validS)
+            maxS = Math.max(...validS)
           }
         }
         if (!svrs || svrs.length !== ptCount) {

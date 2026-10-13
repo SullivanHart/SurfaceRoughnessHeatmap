@@ -145,6 +145,7 @@ html, body {
 .colorbar-ticks,
 .part-pill-svr,
 .point-size-stop,
+.z-scale-stop,
 .sample-chip-meta {
   font-variant-numeric: tabular-nums;
   font-feature-settings: "tnum" 1;
@@ -1049,7 +1050,8 @@ input[type="number"] {
   gap: 1px;
 }
 
-.point-size-stop {
+.point-size-stop,
+.z-scale-stop {
   background: transparent;
   border: none;
   font-size: 0.7rem;
@@ -1060,11 +1062,13 @@ input[type="number"] {
   cursor: pointer;
 }
 
-.point-size-stop:hover {
+.point-size-stop:hover,
+.z-scale-stop:hover {
   color: var(--text-primary);
 }
 
-.point-size-stop.active {
+.point-size-stop.active,
+.z-scale-stop.active {
   background-color: var(--bg-subtle-active);
   color: var(--text-primary);
   font-weight: 600;
