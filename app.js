@@ -3,6 +3,36 @@ let worker = null
 let currentResult = null
 let selectedFile = null
 let analysisStartTime = 0
+let analysisTimerInterval = null
+
+function startAnalysisTimer () {
+  analysisStartTime = performance.now()
+  if (analysisTimerInterval) clearInterval(analysisTimerInterval)
+
+  const statusTimerEl = document.getElementById('status-timer')
+  if (statusTimerEl) {
+    statusTimerEl.style.display = 'inline-block'
+    statusTimerEl.textContent = '0.0s'
+  }
+
+  analysisTimerInterval = setInterval(() => {
+    const elapsedSec = ((performance.now() - analysisStartTime) / 1000).toFixed(1) + 's'
+    if (statusTimerEl) statusTimerEl.textContent = elapsedSec
+  }, 100)
+}
+
+function stopAnalysisTimer () {
+  if (analysisTimerInterval) {
+    clearInterval(analysisTimerInterval)
+    analysisTimerInterval = null
+  }
+  const statusTimerEl = document.getElementById('status-timer')
+  if (statusTimerEl && analysisStartTime > 0) {
+    const wallElapsed = ((performance.now() - analysisStartTime) / 1000).toFixed(1) + 's'
+    statusTimerEl.textContent = wallElapsed
+    statusTimerEl.style.display = 'inline-block'
+  }
+}
 
 // DOM Elements
 const fileInput = document.getElementById('file-input')
@@ -369,6 +399,9 @@ function initWorker () {
       if (selectedFile && !currentResult && !isAnalyzing) {
         startAnalysis(selectedFile)
       }
+    } else if (type === 'analysis_start') {
+      if (analysisId && analysisId !== currentAnalysisId) return
+      startAnalysisTimer()
     } else if (type === 'progress') {
       if (statusDot) statusDot.className = 'status-dot analyzing'
       setProgress(percent, text)
@@ -381,6 +414,7 @@ function initWorker () {
       setProcessingUploadVisibility(false)
       if (statusDot) statusDot.className = 'status-dot ready'
       completeProgress('Ready')
+      stopAnalysisTimer()
       hideErrorBanner()
       currentResult = data
       renderResults(data)
@@ -389,6 +423,7 @@ function initWorker () {
       setProcessingUploadVisibility(false)
       if (statusDot) statusDot.className = 'status-dot error'
       resetProgress()
+      stopAnalysisTimer()
       if (resultsContainer) {
         resultsContainer.style.opacity = '1'
         resultsContainer.style.pointerEvents = 'auto'
@@ -432,6 +467,7 @@ function initWorker () {
     setProcessingUploadVisibility(false)
     if (statusDot) statusDot.className = 'status-dot ready'
     resetProgress()
+    stopAnalysisTimer()
     if (statusText) statusText.textContent = `Worker Error: ${err.message || 'Script execution failed'}`
   }
 }
@@ -482,7 +518,12 @@ async function startAnalysis (file) {
   isAnalyzing = true
   setProcessingUploadVisibility(true, file.name)
   const thisAnalysisId = ++currentAnalysisId
-  analysisStartTime = performance.now()
+  if (analysisTimerInterval) {
+    clearInterval(analysisTimerInterval)
+    analysisTimerInterval = null
+  }
+  const statusTimerEl = document.getElementById('status-timer')
+  if (statusTimerEl) statusTimerEl.style.display = 'none'
   if (statusDot) statusDot.className = 'status-dot analyzing'
   setProgress(4, `Reading ${file.name}...`)
 
@@ -1349,8 +1390,45 @@ function renderShapeMiniPreview () {
   ctx.restore()
 }
 
+function ensureGrid2D (target) {
+  if (!target) return
+  if ((!target.grid_svr || !Array.isArray(target.grid_svr)) && target.grid_svr_f32 && target.grid_width && target.grid_height) {
+    const f32 = target.grid_svr_f32
+    const w = target.grid_width
+    const h = target.grid_height
+    const grid = new Array(h)
+    for (let r = 0; r < h; r++) {
+      const row = new Array(w)
+      const offset = r * w
+      for (let c = 0; c < w; c++) {
+        const v = f32[offset + c]
+        row[c] = isNaN(v) ? null : v
+      }
+      grid[r] = row
+    }
+    target.grid_svr = grid
+  }
+  if ((!target.grid_z || !Array.isArray(target.grid_z)) && target.grid_z_f32 && target.grid_width && target.grid_height) {
+    const f32 = target.grid_z_f32
+    const w = target.grid_width
+    const h = target.grid_height
+    const grid = new Array(h)
+    for (let r = 0; r < h; r++) {
+      const row = new Array(w)
+      const offset = r * w
+      for (let c = 0; c < w; c++) {
+        const v = f32[offset + c]
+        row[c] = isNaN(v) ? null : v
+      }
+      grid[r] = row
+    }
+    target.grid_z = grid
+  }
+}
+
 function getOrExtractSurfaceData (target, unit, robust) {
   if (!target) return null
+  ensureGrid2D(target)
   const svrGrid = (target.grid_svr && Array.isArray(target.grid_svr) && target.grid_svr.length > 0)
     ? target.grid_svr
     : target.grid_z
@@ -2015,6 +2093,7 @@ function updatePointCloudMarkerSizes () {
 
 
 function renderHeatmap (res) {
+  if (res) ensureGrid2D(res)
   if (
     !res ||
     !res.grid_svr ||

@@ -482,9 +482,11 @@
         </footer>
       </div>
 
-      <!-- 3. Bottom Workbench Status Bar (Positioned in Actual Bottom Right) -->
+      <!-- 3. Bottom Workbench Status Bar -->
       <footer class="workbench-statusbar" id="workbench-statusbar">
-        <div class="statusbar-spacer"></div>
+        <div class="statusbar-left" id="statusbar-left">
+          <span class="status-timer tabular" id="status-timer" style="display: none;">0.0s</span>
+        </div>
         <div class="system-status" id="system-status">
           <div class="status-dot" id="status-dot"></div>
           <span id="status-text">Ready</span>

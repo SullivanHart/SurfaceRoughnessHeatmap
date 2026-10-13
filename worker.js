@@ -200,7 +200,7 @@ def _run_analysis_payload_impl(file_path_str, file_name, grid_mm, short_cutoff_m
         )
 
         report(82, "Rasterizing height topography...")
-        grid_svr_um = compute_heatmap_grid(res.grid_z_mm, grid_mm, radius_mm=5.0)
+        grid_svr_um = res.heatmap_grid_um if (hasattr(res, "heatmap_grid_um") and res.heatmap_grid_um is not None) else compute_heatmap_grid(res.grid_z_mm, grid_mm, radius_mm=5.0)
 
         report(92, "Formatting surface metrics and report...")
         full_res = RoughnessResult(
@@ -224,7 +224,6 @@ def _run_analysis_payload_impl(file_path_str, file_name, grid_mm, short_cutoff_m
         )
 
         report_str = format_report(full_res)
-        grid_svr = np.where(np.isnan(grid_svr_um), None, np.round(grid_svr_um, 3)).tolist()
 
         valid_s = grid_svr_um[np.isfinite(grid_svr_um)]
         min_s = float(np.percentile(valid_s, 1)) if len(valid_s) > 0 else float(res.svr_um * 0.5)
@@ -253,16 +252,18 @@ def _run_analysis_payload_impl(file_path_str, file_name, grid_mm, short_cutoff_m
             pt_abn = res.abnormal_mask[iy, ix].astype(np.uint8)
             pt_abn_bytes = np.ascontiguousarray(pt_abn).tobytes()
 
+        elev_g = res.elevation_grid_mm if hasattr(res, "elevation_grid_mm") and res.elevation_grid_mm is not None else res.grid_z_mm
+        gz = elev_g * 1000.0 if elev_g is not None else None
+
         _last_binary_payload = {
             "is_3d": False,
             "sample_points": raw_f32.tobytes(),
             "sample_svr": pt_svr_bytes,
             "sample_abnormal": pt_abn_bytes,
+            "grid_svr": np.ascontiguousarray(grid_svr_um, dtype=np.float32).tobytes() if grid_svr_um is not None else None,
+            "grid_z": np.ascontiguousarray(gz, dtype=np.float32).tobytes() if gz is not None else None,
         }
 
-        elev_g = res.elevation_grid_mm if hasattr(res, "elevation_grid_mm") and res.elevation_grid_mm is not None else res.grid_z_mm
-        gz = elev_g * 1000.0 if elev_g is not None else None
-        grid_z = np.where(np.isnan(gz), None, np.round(gz, 2)).tolist() if gz is not None else []
         grid_abn_mask = res.abnormal_mask.tolist() if (hasattr(res, "abnormal_mask") and res.abnormal_mask is not None) else None
 
         out = {
@@ -282,8 +283,8 @@ def _run_analysis_payload_impl(file_path_str, file_name, grid_mm, short_cutoff_m
             "patch_height_mm": res.grid_height * grid_mm,
             "average_point_spacing_mm": grid_mm,
             "grid_coverage_pct": float(np.count_nonzero(~np.isnan(res.grid_z_mm)) / res.grid_z_mm.size * 100.0),
-            "grid_svr": grid_svr,
-            "grid_z": grid_z,
+            "grid_svr": None,
+            "grid_z": None,
             "grid_z_pitch_mm": float(grid_mm),
             "sample_points_count": len(raw_f32),
             "sample_points_3d": sample_pts,
@@ -317,7 +318,7 @@ def _run_analysis_payload_impl(file_path_str, file_name, grid_mm, short_cutoff_m
                 "decomp_ms": (t_decomp - t0) * 1000.0,
                 "load_ms": (t_load - t_decomp) * 1000.0,
                 "analyze_ms": (t_analyze - t_load) * 1000.0,
-                "total_ms": (t_analyze - t0) * 1000.0,
+                "total_ms": (time.perf_counter() - t0) * 1000.0,
             }
         }
     else:
@@ -337,8 +338,7 @@ def _run_analysis_payload_impl(file_path_str, file_name, grid_mm, short_cutoff_m
             pct = int(80 + 16 * (i / max(1, num_patches)))
             report(pct, f"Rasterizing topography for {p.name} ({i+1}/{num_patches})...")
             r = p.roughness
-            hmap = compute_heatmap_grid(r.grid, grid_mm, radius_mm=5.0) if r.grid is not None else None
-            grid_svr_patch = np.where(np.isnan(hmap), None, np.round(hmap, 3)).tolist() if hmap is not None else []
+            hmap = r.heatmap_grid_um if (hasattr(r, "heatmap_grid_um") and r.heatmap_grid_um is not None) else (compute_heatmap_grid(r.grid, grid_mm, radius_mm=5.0) if r.grid is not None else None)
             coverage_pct = float(np.count_nonzero(~np.isnan(r.grid)) / r.grid.size * 100.0) if (r.grid is not None and r.grid.size > 0) else 0.0
             comparators = r.comparator_equivalents()
 
@@ -363,7 +363,6 @@ def _run_analysis_payload_impl(file_path_str, file_name, grid_mm, short_cutoff_m
 
             elev_g = r.elevation_grid if hasattr(r, "elevation_grid") and r.elevation_grid is not None else r.grid
             gz = elev_g * 1000.0 if elev_g is not None else None
-            grid_z = np.where(np.isnan(gz), None, np.round(gz, 2)).tolist() if gz is not None else []
 
             # Invalid/edge points belonging to this face
             inv_pts = p.invalid_points if hasattr(p, "invalid_points") and p.invalid_points is not None else np.zeros((0, 3))
@@ -402,6 +401,8 @@ def _run_analysis_payload_impl(file_path_str, file_name, grid_mm, short_cutoff_m
                 "sample_svr": pt_svr_bytes,
                 "sample_abnormal": pt_abn_bytes,
                 "invalid_points": inv_pts_bytes,
+                "grid_svr": np.ascontiguousarray(hmap, dtype=np.float32).tobytes() if hmap is not None else None,
+                "grid_z": np.ascontiguousarray(gz, dtype=np.float32).tobytes() if gz is not None else None,
             })
 
             patches_data.append({
@@ -420,8 +421,8 @@ def _run_analysis_payload_impl(file_path_str, file_name, grid_mm, short_cutoff_m
                 "svr_um": r.svr_um,
                 "processed_points": r.processed_points,
                 "grid_coverage_pct": round(coverage_pct, 1),
-                "grid_svr": grid_svr_patch,
-                "grid_z": grid_z,
+                "grid_svr": None,
+                "grid_z": None,
                 "grid_z_pitch_mm": float(grid_mm),
                 "sample_points_count": len(raw_f32),
                 "sample_points_3d": sample_pts,
@@ -514,7 +515,7 @@ def _run_analysis_payload_impl(file_path_str, file_name, grid_mm, short_cutoff_m
                 "decomp_ms": (t_decomp - t0) * 1000.0,
                 "load_ms": (t_load - t_decomp) * 1000.0,
                 "analyze_ms": (t_analyze - t_load) * 1000.0,
-                "total_ms": (t_analyze - t0) * 1000.0,
+                "total_ms": (time.perf_counter() - t0) * 1000.0,
             }
         }
     report(97, "Finalizing report...")
@@ -616,6 +617,8 @@ self.onmessage = async function (e) {
         return
       }
 
+      postMessage({ type: 'analysis_start', analysisId: analysisId })
+
       const {
         fileData,
         fileName,
@@ -689,10 +692,20 @@ run_analysis_payload(_file_path, _file_name, _grid_mm, _short_cutoff_mm, _long_c
               if (bp.invalid_points) {
                 p.invalid_points = toTransferableFloat32(bp.invalid_points, transferList)
               }
+              if (bp.grid_svr) {
+                p.grid_svr_f32 = toTransferableFloat32(bp.grid_svr, transferList)
+              }
+              if (bp.grid_z) {
+                p.grid_z_f32 = toTransferableFloat32(bp.grid_z, transferList)
+              }
             }
           })
           if (binPayload.unassigned_points) {
             result.unassigned_points_f32 = toTransferableFloat32(binPayload.unassigned_points, transferList)
+          }
+          if (result.patches && result.patches[0]) {
+            result.grid_svr_f32 = result.patches[0].grid_svr_f32
+            result.grid_z_f32 = result.patches[0].grid_z_f32
           }
         } else {
           if (binPayload.sample_points) {
@@ -703,6 +716,12 @@ run_analysis_payload(_file_path, _file_name, _grid_mm, _short_cutoff_mm, _long_c
           }
           if (binPayload.sample_abnormal) {
             result.sample_abnormal = toTransferableUint8(binPayload.sample_abnormal, transferList)
+          }
+          if (binPayload.grid_svr) {
+            result.grid_svr_f32 = toTransferableFloat32(binPayload.grid_svr, transferList)
+          }
+          if (binPayload.grid_z) {
+            result.grid_z_f32 = toTransferableFloat32(binPayload.grid_z, transferList)
           }
         }
       }

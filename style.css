@@ -1555,10 +1555,15 @@ input[type="number"] {
   border-top: 1px solid var(--border-subtle);
   display: flex;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: space-between;
   padding: 0 12px;
   z-index: 40;
   user-select: none;
+}
+
+.workbench-statusbar .statusbar-left {
+  display: flex;
+  align-items: center;
 }
 
 .workbench-statusbar .system-status {
@@ -1568,6 +1573,13 @@ input[type="number"] {
   font-size: 0.72rem;
   color: var(--text-secondary);
   font-family: var(--font-mono);
+}
+
+.workbench-statusbar .status-timer {
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  line-height: 1.2;
 }
 
 /* Occupied Open Scan Button */
