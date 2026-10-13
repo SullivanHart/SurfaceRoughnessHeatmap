@@ -163,6 +163,7 @@ def _run_analysis_payload_impl(file_path_str, file_name, grid_mm, short_cutoff_m
         short_cutoff_mm=short_cutoff_mm,
         long_cutoff_mm=long_cutoff_mm,
         gaussian_mesh=gaussian_mesh,
+        detect_abnormalities=True,
     )
 
     is_planar = is_planar_surface(pts)
@@ -177,6 +178,7 @@ def _run_analysis_payload_impl(file_path_str, file_name, grid_mm, short_cutoff_m
             variogram_points=10,
             variogram_span_mm=0.5,
             gaussian_mesh=gaussian_mesh,
+            detect_abnormalities=True,
         )
         t_analyze = time.perf_counter()
 
@@ -216,6 +218,9 @@ def _run_analysis_payload_impl(file_path_str, file_name, grid_mm, short_cutoff_m
             variogram_bins_um=res.variogram_bins_um,
             variogram_counts=res.variogram_counts,
             config=conf,
+            abnormalities=res.abnormalities,
+            svr_clean_um=res.svr_clean_um,
+            abnormal_mask=res.abnormal_mask,
         )
 
         report_str = format_report(full_res)
@@ -236,19 +241,34 @@ def _run_analysis_payload_impl(file_path_str, file_name, grid_mm, short_cutoff_m
             pt_svr = np.nan_to_num(pt_svr, nan=float(res.svr_um))
             pt_svr_bytes = np.ascontiguousarray(pt_svr, dtype=np.float32).tobytes()
 
+        pt_abn_bytes = None
+        if hasattr(res, "abnormal_mask") and res.abnormal_mask is not None and len(raw_f32) > 0 and len(u) > 0:
+            h_m, w_m = res.abnormal_mask.shape
+            orig_x = float(res.grid_origin_mm[0]) if res.grid_origin_mm is not None else 0.0
+            orig_y = float(res.grid_origin_mm[1]) if res.grid_origin_mm is not None else 0.0
+            u_samp = u[::stride_pts]
+            v_samp = v[::stride_pts]
+            ix = np.clip(np.round((u_samp - orig_x) / grid_mm).astype(int), 0, w_m - 1)
+            iy = np.clip(np.round((v_samp - orig_y) / grid_mm).astype(int), 0, h_m - 1)
+            pt_abn = res.abnormal_mask[iy, ix].astype(np.uint8)
+            pt_abn_bytes = np.ascontiguousarray(pt_abn).tobytes()
+
         _last_binary_payload = {
             "is_3d": False,
             "sample_points": raw_f32.tobytes(),
             "sample_svr": pt_svr_bytes,
+            "sample_abnormal": pt_abn_bytes,
         }
 
         elev_g = res.elevation_grid_mm if hasattr(res, "elevation_grid_mm") and res.elevation_grid_mm is not None else res.grid_z_mm
         gz = elev_g * 1000.0 if elev_g is not None else None
         grid_z = np.where(np.isnan(gz), None, np.round(gz, 2)).tolist() if gz is not None else []
+        grid_abn_mask = res.abnormal_mask.tolist() if (hasattr(res, "abnormal_mask") and res.abnormal_mask is not None) else None
 
         out = {
             "effective_name": eff_name,
             "is_3d": False,
+            "grid_abnormal_mask": grid_abn_mask,
             "sa_um": res.sa_um,
             "sq_um": res.sq_um,
             "svr_um": res.svr_um,
@@ -277,6 +297,22 @@ def _run_analysis_payload_impl(file_path_str, file_name, grid_mm, short_cutoff_m
             "variogram_counts": [int(x) for x in res.variogram_counts],
             "comparators": full_res.comparator_equivalents(),
             "report_text": report_str,
+            "svr_clean_um": full_res.svr_clean_um,
+            "abnormal_area_pct": full_res.abnormal_area_pct,
+            "abnormal_area_mm2": full_res.abnormal_area_mm2,
+            "abnormal_frequency_per_dm2": full_res.abnormal_frequency_per_dm2,
+            "abnormalities": [
+                {
+                    "id": a.id,
+                    "kind": a.kind,
+                    "area_mm2": round(a.area_mm2, 2),
+                    "diameter_mm": round(a.diameter_mm, 2),
+                    "peak_deviation_um": round(a.peak_deviation_um, 1),
+                    "centroid_uv_mm": [round(a.centroid_uv_mm[0], 2), round(a.centroid_uv_mm[1], 2)],
+                    "point_count": a.point_count,
+                }
+                for a in (full_res.abnormalities or [])
+            ],
             "timings": {
                 "decomp_ms": (t_decomp - t0) * 1000.0,
                 "load_ms": (t_load - t_decomp) * 1000.0,
@@ -347,15 +383,31 @@ def _run_analysis_payload_impl(file_path_str, file_name, grid_mm, short_cutoff_m
             else:
                 inv_sample_pts = []
 
+            pt_abn_bytes = None
+            mask = getattr(r, "abnormal_mask", None)
+            if mask is not None and r.plane is not None and len(sampled_pts) > 0:
+                h_m, w_m = mask.shape
+                orig_x = float(r.grid_origin_mm[0]) if r.grid_origin_mm is not None else 0.0
+                orig_y = float(r.grid_origin_mm[1]) if r.grid_origin_mm is not None else 0.0
+                diff = sampled_pts - r.plane.centroid
+                u = np.dot(diff, r.plane.x_axis)
+                v = np.dot(diff, r.plane.y_axis)
+                ix = np.clip(np.round((u - orig_x) / grid_mm).astype(int), 0, w_m - 1)
+                iy = np.clip(np.round((v - orig_y) / grid_mm).astype(int), 0, h_m - 1)
+                pt_abn = mask[iy, ix].astype(np.uint8)
+                pt_abn_bytes = np.ascontiguousarray(pt_abn).tobytes()
+
             patch_binaries.append({
                 "sample_points": raw_f32.tobytes(),
                 "sample_svr": pt_svr_bytes,
+                "sample_abnormal": pt_abn_bytes,
                 "invalid_points": inv_pts_bytes,
             })
 
             patches_data.append({
                 "patch_id": p.patch_id,
                 "name": p.name,
+                "grid_abnormal_mask": mask.tolist() if mask is not None else None,
                 "normal": [round(float(x), 4) for x in p.normal],
                 "centroid": [round(float(x), 2) for x in p.centroid],
                 "area_mm2": round(float(p.area_mm2), 1),
@@ -384,6 +436,22 @@ def _run_analysis_payload_impl(file_path_str, file_name, grid_mm, short_cutoff_m
                 "variogram_bins": [round(float(x), 4) for x in r.variogram_bins_um] if r.variogram_bins_um is not None else [],
                 "variogram_counts": [int(x) for x in r.variogram_counts] if r.variogram_counts is not None else [],
                 "comparators": comparators,
+                "svr_clean_um": r.svr_clean_um if hasattr(r, "svr_clean_um") else None,
+                "abnormal_area_pct": r.abnormal_area_pct if hasattr(r, "abnormal_area_pct") else 0.0,
+                "abnormal_area_mm2": r.abnormal_area_mm2 if hasattr(r, "abnormal_area_mm2") else 0.0,
+                "abnormal_frequency_per_dm2": r.abnormal_frequency_per_dm2 if hasattr(r, "abnormal_frequency_per_dm2") else 0.0,
+                "abnormalities": [
+                    {
+                        "id": a.id,
+                        "kind": a.kind,
+                        "area_mm2": round(a.area_mm2, 2),
+                        "diameter_mm": round(a.diameter_mm, 2),
+                        "peak_deviation_um": round(a.peak_deviation_um, 1),
+                        "centroid_uv_mm": [round(a.centroid_uv_mm[0], 2), round(a.centroid_uv_mm[1], 2)],
+                        "point_count": a.point_count,
+                    }
+                    for a in (getattr(r, "abnormalities", None) or [])
+                ],
             })
 
         dominant_data = patches_data[0]
@@ -430,6 +498,7 @@ def _run_analysis_payload_impl(file_path_str, file_name, grid_mm, short_cutoff_m
             "grid_svr": dominant_data["grid_svr"],
             "grid_z": dominant_data["grid_z"],
             "grid_z_pitch_mm": dominant_data["grid_z_pitch_mm"],
+            "grid_abnormal_mask": dominant_data.get("grid_abnormal_mask"),
             "sample_points_3d": dominant_data["sample_points_3d"],
             "grid_width": dominant_data["grid_width"],
             "grid_height": dominant_data["grid_height"],
@@ -511,6 +580,22 @@ function toTransferableFloat32 (u8, transferList) {
     transferList.push(ab)
   }
   return new Float32Array(ab)
+}
+
+function toTransferableUint8 (u8, transferList) {
+  if (!u8 || !(u8 instanceof Uint8Array) || u8.byteLength === 0) {
+    return null
+  }
+  let ab
+  if (u8.byteOffset === 0 && u8.byteLength === u8.buffer.byteLength) {
+    ab = u8.buffer
+  } else {
+    ab = u8.buffer.slice(u8.byteOffset, u8.byteOffset + u8.byteLength)
+  }
+  if (transferList && ab && !transferList.includes(ab)) {
+    transferList.push(ab)
+  }
+  return new Uint8Array(ab)
 }
 
 let currentWorkerJobId = 0
@@ -598,6 +683,9 @@ run_analysis_payload(_file_path, _file_name, _grid_mm, _short_cutoff_mm, _long_c
               if (bp.sample_svr) {
                 p.sample_svr = toTransferableFloat32(bp.sample_svr, transferList)
               }
+              if (bp.sample_abnormal) {
+                p.sample_abnormal = toTransferableUint8(bp.sample_abnormal, transferList)
+              }
               if (bp.invalid_points) {
                 p.invalid_points = toTransferableFloat32(bp.invalid_points, transferList)
               }
@@ -612,6 +700,9 @@ run_analysis_payload(_file_path, _file_name, _grid_mm, _short_cutoff_mm, _long_c
           }
           if (binPayload.sample_svr) {
             result.sample_svr = toTransferableFloat32(binPayload.sample_svr, transferList)
+          }
+          if (binPayload.sample_abnormal) {
+            result.sample_abnormal = toTransferableUint8(binPayload.sample_abnormal, transferList)
           }
         }
       }

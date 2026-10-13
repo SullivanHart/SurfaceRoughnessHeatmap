@@ -769,6 +769,12 @@ input[type="number"] {
   text-transform: uppercase;
 }
 
+.badge-pass {
+  background-color: var(--badge-pass-bg);
+  color: var(--badge-pass-text);
+  border: 1px solid rgba(34, 197, 94, 0.3);
+}
+
 .badge-warn {
   background-color: var(--badge-warn-bg);
   color: var(--badge-warn-text);
@@ -1051,7 +1057,8 @@ input[type="number"] {
 }
 
 .point-size-stop,
-.z-scale-stop {
+.z-scale-stop,
+.abn-view-stop {
   background: transparent;
   border: none;
   font-size: 0.7rem;
@@ -1063,12 +1070,14 @@ input[type="number"] {
 }
 
 .point-size-stop:hover,
-.z-scale-stop:hover {
+.z-scale-stop:hover,
+.abn-view-stop:hover {
   color: var(--text-primary);
 }
 
 .point-size-stop.active,
-.z-scale-stop.active {
+.z-scale-stop.active,
+.abn-view-stop.active {
   background-color: var(--bg-subtle-active);
   color: var(--text-primary);
   font-weight: 600;
@@ -1382,6 +1391,24 @@ input[type="number"] {
 .metric-kv-row:last-child {
   border-bottom: none;
 }
+
+.metric-kv-row.highlight-metric {
+  background-color: var(--bg-card-hover);
+  border-radius: var(--radius-xs);
+  padding: 4px 6px;
+  margin: 0 -6px;
+}
+
+.metric-kv-row.highlight-metric .kv-label {
+  color: var(--accent-blue);
+  font-weight: 500;
+}
+
+.metric-kv-row.highlight-metric .kv-val {
+  color: var(--accent-blue);
+}
+
+
 
 .kv-label {
   color: var(--text-secondary);

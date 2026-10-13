@@ -192,7 +192,7 @@
           <div class="settings-row checkbox-row">
             <label class="settings-checkbox-label">
               <input type="checkbox" id="gaussian-mesh" checked />
-              <span>ISO 16610-61 Gaussian Form Removal</span>
+              <span>Gaussian Form Removal</span>
             </label>
           </div>
         </div>
@@ -306,6 +306,18 @@
               </label>
             </div>
 
+            <div class="hud-sep" id="abn-hud-sep"></div>
+
+            <!-- Abnormality Filter [ All | Filtered | Abnormalities ] -->
+            <div class="hud-group" id="abn-hud-group" title="Abnormality surface filter">
+              <span class="hud-label">View</span>
+              <div id="abn-view-stops" class="segmented-control" role="radiogroup" aria-label="Abnormality View">
+                <button type="button" class="abn-view-stop active" data-mode="all" title="With everything (default)">All</button>
+                <button type="button" class="abn-view-stop" data-mode="filtered" title="Filtered surface without abnormalities">Filtered</button>
+                <button type="button" class="abn-view-stop" data-mode="only" title="Just abnormalities">Abnormalities</button>
+              </div>
+            </div>
+
             <div class="hud-sep"></div>
 
             <!-- Camera Reset / Reorient -->
@@ -374,6 +386,31 @@
               <div class="metric-kv-row">
                 <span class="kv-label" id="sec-label-5">Total Points</span>
                 <span class="kv-val tabular" id="sec-val-5">-</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Abnormalities Card -->
+          <div class="inspector-card" id="abnormality-card">
+            <div class="inspector-card-header">
+              <span class="inspector-title">Abnormalities</span>
+            </div>
+            <div class="metric-kv-list">
+              <div class="metric-kv-row" id="abnormality-clean-svr-row">
+                <span class="kv-label">Filtered S<sub>vr</sub></span>
+                <span class="kv-val tabular" id="abnormality-clean-svr">-</span>
+              </div>
+              <div class="metric-kv-row">
+                <span class="kv-label">Count</span>
+                <span class="kv-val tabular" id="abnormality-count">0</span>
+              </div>
+              <div class="metric-kv-row">
+                <span class="kv-label">Area</span>
+                <span class="kv-val tabular" id="abnormality-area">0.0%</span>
+              </div>
+              <div class="metric-kv-row" id="abnormality-breakdown-row" style="display: none;">
+                <span class="kv-label">Types</span>
+                <span class="kv-val tabular" id="abnormality-breakdown">-</span>
               </div>
             </div>
           </div>

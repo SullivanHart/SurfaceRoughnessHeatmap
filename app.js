@@ -523,8 +523,150 @@ function formatVal (valUm, unit) {
   return `${formatValNum(valUm, unit)} ${u}`
 }
 
+function getWorstPatch (res) {
+  if (!res || !res.patches || res.patches.length === 0) return null
+  let worst = null
+  let maxVal = -1
+  for (let i = 0; i < res.patches.length; i++) {
+    const p = res.patches[i]
+    if (typeof p.svr_um === 'number' && p.svr_um > maxVal) {
+      maxVal = p.svr_um
+      worst = p
+    }
+  }
+  return worst
+}
+
+let currentAbnormalityMode = 'all' // 'all' (Everything, default) | 'filtered' | 'only'
+
+function updateAbnormalityCard (data, unit) {
+  const card = document.getElementById('abnormality-card')
+  if (!card) return
+
+  const cleanSvrEl = document.getElementById('abnormality-clean-svr')
+  const countEl = document.getElementById('abnormality-count')
+  const areaEl = document.getElementById('abnormality-area')
+  const breakdownRow = document.getElementById('abnormality-breakdown-row')
+  const breakdownEl = document.getElementById('abnormality-breakdown')
+  const cleanRow = document.getElementById('abnormality-clean-svr-row')
+
+  if (!data) {
+    if (cleanSvrEl) cleanSvrEl.textContent = '-'
+    if (countEl) countEl.textContent = '0'
+    if (areaEl) areaEl.textContent = '0.0%'
+    if (breakdownRow) breakdownRow.style.display = 'none'
+    if (cleanRow) cleanRow.classList.remove('highlight-metric')
+    return
+  }
+
+  const abnList = data.abnormalities || []
+  const count = abnList.length
+  const baseSvr = data.svr_um || (currentResult?.worst_svr_um || 0)
+  const cleanSvr = (typeof data.svr_clean_um === 'number' && Number.isFinite(data.svr_clean_um))
+    ? data.svr_clean_um
+    : baseSvr
+
+  if (cleanSvrEl) cleanSvrEl.textContent = formatVal(cleanSvr, unit)
+  if (countEl) countEl.textContent = String(count)
+
+  const areaPct = (typeof data.abnormal_area_pct === 'number') ? data.abnormal_area_pct : 0
+  if (areaEl) areaEl.textContent = `${areaPct.toFixed(1)}%`
+
+  const hasDiff = count > 0 && Math.abs(cleanSvr - baseSvr) > 0.001
+  const isViewingFiltered = (currentAbnormalityMode === 'filtered' || currentAbnormalityMode === 'without')
+
+  if (cleanRow) {
+    cleanRow.classList.toggle('highlight-metric', isViewingFiltered && hasDiff)
+  }
+
+  if (count === 0) {
+    if (breakdownRow) breakdownRow.style.display = 'none'
+  } else {
+    const protrusions = abnList.filter(a => a.kind === 'protrusion').length
+    const depressions = abnList.filter(a => a.kind === 'depression').length
+    const parts = []
+    if (depressions > 0) parts.push(`${depressions} pit${depressions > 1 ? 's' : ''}`)
+    if (protrusions > 0) parts.push(`${protrusions} scab${protrusions > 1 ? 's' : ''}`)
+
+    if (breakdownRow && breakdownEl) {
+      breakdownEl.textContent = parts.join(', ') || `${count} defects`
+      breakdownRow.style.display = 'flex'
+    }
+  }
+}
+
+function updateKpiVerdictDisplay () {
+  if (!currentResult) return
+  const unit = unitSelect ? unitSelect.value : 'µm'
+  const verdictUnitTag = document.getElementById('verdict-unit-tag')
+
+  let activeData = null
+  let faceLabel = ''
+  if (currentResult.is_3d && activePatchIndex >= 0 && currentResult.patches && currentResult.patches[activePatchIndex]) {
+    activeData = currentResult.patches[activePatchIndex]
+    faceLabel = `Face ${activePatchIndex + 1} `
+  } else if (currentResult.is_3d) {
+    activeData = getWorstPatch(currentResult) || currentResult
+    faceLabel = ''
+  } else {
+    activeData = currentResult
+    faceLabel = ''
+  }
+
+  const baseSvr = activeData.svr_um || (currentResult.worst_svr_um || 0)
+
+  // Primary title and number ALWAYS remain the primary S_VR measurement
+  if (kpiCardTitle) {
+    kpiCardTitle.innerHTML = `${faceLabel}Surface Roughness (S<sub>vr</sub>)`
+  }
+
+  if (kpiSvr) {
+    kpiSvr.textContent = formatValNum(baseSvr, unit)
+    if (verdictUnitTag) verdictUnitTag.innerHTML = (unit === 'mm' ? 'mm' : (unit === 'in' ? 'in' : '&micro;m'))
+  }
+}
+
+function setAbnormalityMode (mode) {
+  currentAbnormalityMode = mode || 'all'
+
+  // 1. Update WebGL PointCloudViewer
+  if (pointCloudViewer && typeof pointCloudViewer.setAbnormalityMode === 'function') {
+    pointCloudViewer.setAbnormalityMode(currentAbnormalityMode)
+  }
+
+  // 2. Update 3D Topography (Plotly) view if currently active
+  if (currentResult && currentViewMode === '3d-surface') {
+    const target = (currentResult.is_3d && activePatchIndex >= 0 && currentResult.patches && currentResult.patches[activePatchIndex])
+      ? currentResult.patches[activePatchIndex]
+      : currentResult
+    render3DSurface(target)
+  }
+
+  // 3. Update Inspector KPI Card
+  updateKpiVerdictDisplay()
+
+  // 4. Update row highlights in Abnormality Card
+  const activeData = (currentResult && currentResult.is_3d && activePatchIndex >= 0 && currentResult.patches && currentResult.patches[activePatchIndex])
+    ? currentResult.patches[activePatchIndex]
+    : (getWorstPatch(currentResult) || currentResult)
+  const unit = unitSelect ? unitSelect.value : 'µm'
+  updateAbnormalityCard(activeData, unit)
+
+  // 5. Sync Viewport HUD toggle buttons
+  document.querySelectorAll('#abn-view-stops .abn-view-stop').forEach(btn => {
+    btn.classList.toggle('active', btn.getAttribute('data-mode') === currentAbnormalityMode)
+  })
+}
+
 function renderResults (res) {
   currentResult = res
+  currentAbnormalityMode = 'all'
+  if (pointCloudViewer && typeof pointCloudViewer.setAbnormalityMode === 'function') {
+    pointCloudViewer.setAbnormalityMode('all')
+  }
+  document.querySelectorAll('#abn-view-stops .abn-view-stop').forEach(btn => {
+    btn.classList.toggle('active', btn.getAttribute('data-mode') === 'all')
+  })
   surfaceCameraMap.clear()
   lastRenderedFaceKey = null
   if (emptyState) emptyState.style.display = 'none'
@@ -603,16 +745,7 @@ function render3DFaces (res) {
   if (tabFacesContent) tabFacesContent.classList.add('active')
 
   // Find governing/worst face
-  let worstPatch = null
-  let maxVal = -1
-  if (res.patches && res.patches.length > 0) {
-    res.patches.forEach(p => {
-      if (typeof p.svr_um === 'number' && p.svr_um > maxVal) {
-        maxVal = p.svr_um
-        worstPatch = p
-      }
-    })
-  }
+  const worstPatch = getWorstPatch(res)
 
   // Render Target Navigation Tabs (All + N Faces)
   if (partNavPills) {
@@ -766,20 +899,10 @@ function selectOverview (options = {}) {
   }
 
   // Find worst face metadata for description
-  let worstPatch = null
-  if (res.patches && res.patches.length > 0) {
-    let maxVal = -1
-    res.patches.forEach(p => {
-      if (typeof p.svr_um === 'number' && p.svr_um > maxVal) {
-        maxVal = p.svr_um
-        worstPatch = p
-      }
-    })
-  }
+  const worstPatch = getWorstPatch(res)
 
   // Populate Right KPI Card in Part Overview Mode
-  if (kpiCardTitle) kpiCardTitle.innerHTML = 'Roughness (S<sub>vr</sub>)'
-  if (kpiSvr) kpiSvr.textContent = formatValNum(res.worst_svr_um || (worstPatch ? worstPatch.svr_um : 0), unit)
+  updateKpiVerdictDisplay()
 
   if (secLabel1) secLabel1.innerHTML = 'Arithmetic Mean (S<sub>a</sub>)'
   if (secVal1) secVal1.textContent = worstPatch ? formatVal(worstPatch.sa_um, unit) : '-'
@@ -791,6 +914,8 @@ function selectOverview (options = {}) {
   if (secVal4) secVal4.textContent = formatVal(res.mean_svr_um || 0, unit)
   if (secLabel5) secLabel5.innerHTML = 'Active Points'
   if (secVal5) secVal5.textContent = `${(res.assigned_points || res.total_points || res.processed_points || 0).toLocaleString()} pts`
+
+  updateAbnormalityCard(worstPatch || res, unit)
 
   // Update Compact Comparators Table in Right Results Panel
   const compTbody = document.getElementById('comparator-tbody')
@@ -874,8 +999,7 @@ function selectFace (index) {
   updateTableRowHighlight(index)
 
   // Populate Right KPI Card in Face Deep-Dive Mode
-  if (kpiCardTitle) kpiCardTitle.innerHTML = `Face ${index + 1} Roughness (S<sub>vr</sub>)`
-  if (kpiSvr) kpiSvr.textContent = formatValNum(patch.svr_um, unit)
+  updateKpiVerdictDisplay()
 
   if (secLabel1) secLabel1.innerHTML = 'Arithmetic Mean (S<sub>a</sub>)'
   if (secVal1) secVal1.textContent = formatVal(patch.sa_um, unit)
@@ -887,6 +1011,8 @@ function selectFace (index) {
   if (secVal4) secVal4.textContent = patch.area_mm2 ? `${patch.area_mm2.toLocaleString()} mm²` : '-'
   if (secLabel5) secLabel5.innerHTML = 'Active Points'
   if (secVal5) secVal5.textContent = `${(patch.point_count || patch.processed_points || 0).toLocaleString()} pts`
+
+  updateAbnormalityCard(patch, unit)
 
   // Update Compact Comparators Table for this Face
   const compTbody = document.getElementById('comparator-tbody')
@@ -970,8 +1096,7 @@ function renderSingleSurface (res) {
   const patchH = (res && typeof res.patch_height_mm === 'number') ? res.patch_height_mm : 0
 
   // KPI Card
-  if (kpiCardTitle) kpiCardTitle.innerHTML = 'Roughness (S<sub>vr</sub>)'
-  if (kpiSvr) kpiSvr.textContent = formatValNum(res.svr_um, unit)
+  updateKpiVerdictDisplay()
 
   if (secLabel1) secLabel1.innerHTML = 'Arithmetic Mean (S<sub>a</sub>)'
   if (secVal1) secVal1.textContent = formatVal(res.sa_um, unit)
@@ -983,6 +1108,8 @@ function renderSingleSurface (res) {
   if (secVal4) secVal4.textContent = res.patch_area_mm2 ? `${res.patch_area_mm2.toLocaleString()} mm²` : `${(patchW * patchH).toLocaleString()} mm²`
   if (secLabel5) secLabel5.innerHTML = 'Active Points'
   if (secVal5) secVal5.textContent = `${(res.processed_points || 0).toLocaleString()} pts`
+
+  updateAbnormalityCard(res, unit)
 
   // Compact Comparator Table in Results Panel
   const compTbody = document.getElementById('comparator-tbody')
@@ -1256,11 +1383,13 @@ function getOrExtractSurfaceData (target, unit, robust) {
   const totalCells = numRows * numCols
   const stride = Math.max(1, Math.ceil(Math.sqrt(totalCells / MAX_PLOT_PTS)))
 
+  const abnMask = target.grid_abnormal_mask
   const validX = []
   const validY = []
   const validZ = []
   const validZUm = []
   const validIntensity = []
+  const validIsAbnormal = []
   const invalidX = []
   const invalidY = []
   const invalidZ = []
@@ -1283,6 +1412,7 @@ function getOrExtractSurfaceData (target, unit, robust) {
       const hasS = typeof sRaw === 'number' && !isNaN(sRaw)
 
       if (hasZ && hasS) {
+        const isAbn = Boolean(abnMask && abnMask[r] && abnMask[r][c])
         const zMm = zRaw * zMultiplier * currentZExaggeration
         const sConverted = sRaw * svrMultiplier
 
@@ -1295,6 +1425,7 @@ function getOrExtractSurfaceData (target, unit, robust) {
           validZ.push(zMm)
           validZUm.push(zRaw)
           validIntensity.push(sConverted)
+          validIsAbnormal.push(isAbn)
         }
       } else if (hasZ && isSampleRow && (c % stride === 0)) {
         invalidX.push(xVal)
@@ -1327,7 +1458,7 @@ function getOrExtractSurfaceData (target, unit, robust) {
     cmax = cmin + 1.0
   }
 
-  const res = { validX, validY, validZ, validZUm, validIntensity, invalidX, invalidY, invalidZ, cmin, cmax, unit, robust, zExaggeration: currentZExaggeration, numRows, numCols, pitch, stride }
+  const res = { validX, validY, validZ, validZUm, validIntensity, validIsAbnormal, invalidX, invalidY, invalidZ, cmin, cmax, unit, robust, zExaggeration: currentZExaggeration, numRows, numCols, pitch, stride }
   target._extractedSurface = res
   return res
 }
@@ -1367,7 +1498,7 @@ function render3DSurface (target) {
     return
   }
 
-  const { validX, validY, validZ, validZUm, validIntensity, invalidX, invalidY, invalidZ, cmin, cmax, numRows, numCols, pitch } = extracted
+  const { validX, validY, validZ, validZUm, validIntensity, validIsAbnormal, invalidX, invalidY, invalidZ, cmin, cmax, numRows, numCols, pitch } = extracted
 
   const isDark = getTheme() === 'dark'
   const chartBg = isDark ? '#121318' : '#fbfbfd'
@@ -1376,37 +1507,6 @@ function render3DSurface (target) {
 
   const showHeatmap = showHeatmapCheckbox ? showHeatmapCheckbox.checked : true
   const faceColor = FACE_PALETTE[activePatchIndex >= 0 ? (activePatchIndex % FACE_PALETTE.length) : 0] || '#2563eb'
-
-  const trace = {
-    type: 'scatter3d',
-    mode: 'markers',
-    name: target.name || 'Face Points',
-    showlegend: false,
-    x: validX,
-    y: validY,
-    z: validZ,
-    customdata: validZUm,
-    marker: showHeatmap ? {
-      size: pointCloudMarkerSize,
-      color: validIntensity,
-      colorscale: palette,
-      cmin: cmin,
-      cmax: cmax,
-      cauto: false,
-      showscale: false,
-      opacity: 1.0
-    } : {
-      size: pointCloudMarkerSize,
-      color: faceColor,
-      showscale: false,
-      opacity: 1.0
-    },
-    hovertemplate: showHeatmap
-      ? `Surface X: %{x:.2f} mm<br>Surface Y: %{y:.2f} mm<br>Elevation Z: %{customdata:.1f} µm<br>Local Svr: %{marker.color:.1f} µm<extra></extra>`
-      : `${target.name || 'Face'}<br>Surface X: %{x:.2f} mm<br>Surface Y: %{y:.2f} mm<br>Elevation Z: %{customdata:.1f} µm<extra></extra>`
-  }
-
-  // Collect invalid and peeled edge points belonging specifically to this face
   const showUnassigned = showUnassignedCheckbox ? showUnassignedCheckbox.checked : true
 
   const xSpan = (numCols > 1 ? (numCols - 1) * pitch : 1)
@@ -1528,8 +1628,164 @@ function render3DSurface (target) {
     doubleClick: false
   }
 
-  const traces = [trace]
-  if (showUnassigned && invalidX.length > 0) {
+  const traces = []
+
+  if (currentAbnormalityMode === 'all') {
+    traces.push({
+      type: 'scatter3d',
+      mode: 'markers',
+      name: target.name || 'Face Points',
+      showlegend: false,
+      x: validX,
+      y: validY,
+      z: validZ,
+      customdata: validZUm,
+      marker: showHeatmap ? {
+        size: pointCloudMarkerSize,
+        color: validIntensity,
+        colorscale: palette,
+        cmin: cmin,
+        cmax: cmax,
+        cauto: false,
+        showscale: false,
+        opacity: 1.0
+      } : {
+        size: pointCloudMarkerSize,
+        color: faceColor,
+        showscale: false,
+        opacity: 1.0
+      },
+      hovertemplate: showHeatmap
+        ? `Surface X: %{x:.2f} mm<br>Surface Y: %{y:.2f} mm<br>Elevation Z: %{customdata:.1f} µm<br>Local Svr: %{marker.color:.1f} µm<extra></extra>`
+        : `${target.name || 'Face'}<br>Surface X: %{x:.2f} mm<br>Surface Y: %{y:.2f} mm<br>Elevation Z: %{customdata:.1f} µm<extra></extra>`
+    })
+  } else {
+    // Partition points into clean surface vs abnormalities
+    const cleanX = [], cleanY = [], cleanZ = [], cleanZUm = [], cleanIntensity = []
+    const abnX = [], abnY = [], abnZ = [], abnZUm = [], abnIntensity = []
+
+    for (let i = 0; i < validX.length; i++) {
+      if (validIsAbnormal && validIsAbnormal[i]) {
+        abnX.push(validX[i])
+        abnY.push(validY[i])
+        abnZ.push(validZ[i])
+        abnZUm.push(validZUm[i])
+        abnIntensity.push(validIntensity[i])
+      } else {
+        cleanX.push(validX[i])
+        cleanY.push(validY[i])
+        cleanZ.push(validZ[i])
+        cleanZUm.push(validZUm[i])
+        cleanIntensity.push(validIntensity[i])
+      }
+    }
+
+    if (currentAbnormalityMode === 'filtered' || currentAbnormalityMode === 'without') {
+      // 1. Filtered surface in full vibrant heatmap
+      traces.push({
+        type: 'scatter3d',
+        mode: 'markers',
+        name: 'Filtered Surface',
+        showlegend: false,
+        x: cleanX,
+        y: cleanY,
+        z: cleanZ,
+        customdata: cleanZUm,
+        marker: showHeatmap ? {
+          size: pointCloudMarkerSize,
+          color: cleanIntensity,
+          colorscale: palette,
+          cmin: cmin,
+          cmax: cmax,
+          cauto: false,
+          showscale: false,
+          opacity: 1.0
+        } : {
+          size: pointCloudMarkerSize,
+          color: faceColor,
+          showscale: false,
+          opacity: 1.0
+        },
+        hovertemplate: showHeatmap
+          ? `Surface X: %{x:.2f} mm<br>Surface Y: %{y:.2f} mm<br>Elevation Z: %{customdata:.1f} µm<br>Local Svr: %{marker.color:.1f} µm<extra></extra>`
+          : `${target.name || 'Face'}<br>Surface X: %{x:.2f} mm<br>Surface Y: %{y:.2f} mm<br>Elevation Z: %{customdata:.1f} µm<extra></extra>`
+      })
+
+      // 2. Excluded abnormalities rendered in muted grey (keeps surface physically continuous)
+      if (abnX.length > 0) {
+        traces.push({
+          type: 'scatter3d',
+          mode: 'markers',
+          name: 'Abnormalities (Excluded)',
+          showlegend: false,
+          x: abnX,
+          y: abnY,
+          z: abnZ,
+          customdata: abnZUm,
+          marker: {
+            size: pointCloudMarkerSize,
+            color: isDark ? '#64748b' : '#94a3b8',
+            opacity: 0.45
+          },
+          hovertemplate: 'Abnormality (Excluded from S<sub>vr</sub>)<br>Surface X: %{x:.2f} mm<br>Surface Y: %{y:.2f} mm<br>Elevation Z: %{customdata:.1f} µm<extra></extra>'
+        })
+      }
+    } else if (currentAbnormalityMode === 'only') {
+      // 1. Ghost clean surface in faint grey context silhouette
+      if (cleanX.length > 0) {
+        traces.push({
+          type: 'scatter3d',
+          mode: 'markers',
+          name: 'Surface (Context)',
+          showlegend: false,
+          x: cleanX,
+          y: cleanY,
+          z: cleanZ,
+          marker: {
+            size: pointCloudMarkerSize,
+            color: isDark ? '#334155' : '#cbd5e1',
+            opacity: 0.25
+          },
+          hoverinfo: 'skip'
+        })
+      }
+
+      // 2. Pop abnormalities in vibrant heatmap color
+      traces.push({
+        type: 'scatter3d',
+        mode: 'markers',
+        name: 'Abnormalities',
+        showlegend: false,
+        x: abnX,
+        y: abnY,
+        z: abnZ,
+        customdata: abnZUm,
+        marker: showHeatmap ? {
+          size: pointCloudMarkerSize,
+          color: abnIntensity,
+          colorscale: palette,
+          cmin: cmin,
+          cmax: cmax,
+          cauto: false,
+          showscale: false,
+          opacity: 1.0
+        } : {
+          size: pointCloudMarkerSize,
+          color: '#f59e0b',
+          showscale: false,
+          opacity: 1.0
+        },
+        hovertemplate: (abnX.length === 0)
+          ? 'No abnormalities detected in this surface<extra></extra>'
+          : (showHeatmap
+            ? `Abnormality<br>Surface X: %{x:.2f} mm<br>Surface Y: %{y:.2f} mm<br>Elevation Z: %{customdata:.1f} µm<br>Local Svr: %{marker.color:.1f} µm<extra></extra>`
+            : `Abnormality<br>Surface X: %{x:.2f} mm<br>Surface Y: %{y:.2f} mm<br>Elevation Z: %{customdata:.1f} µm<extra></extra>`)
+      })
+    }
+  }
+
+  // Edge / peeled unassigned points
+  if (showUnassigned && invalidX && invalidX.length > 0 && currentAbnormalityMode !== 'only') {
     traces.push({
       type: 'scatter3d',
       mode: 'markers',
@@ -1541,7 +1797,7 @@ function render3DSurface (target) {
       marker: {
         size: pointCloudMarkerSize,
         color: isDark ? '#64748b' : '#94a3b8',
-        opacity: 0.75
+        opacity: 0.4
       },
       hoverinfo: 'none'
     })
@@ -2100,34 +2356,26 @@ function updateUnitDisplay () {
   }
 
   // 2. Update KPI Card numbers according to current mode without resetting camera or view
+  updateKpiVerdictDisplay()
   if (currentResult.is_3d && activePatchIndex >= 0 && currentResult.patches && currentResult.patches[activePatchIndex]) {
     // Face Inspection mode (deep dive into specific face)
     const patch = currentResult.patches[activePatchIndex]
-    if (kpiSvr) kpiSvr.textContent = formatValNum(patch.svr_um, unit)
     if (secVal1) secVal1.textContent = formatVal(patch.sa_um, unit)
     if (secVal2) secVal2.textContent = formatVal(patch.sq_um, unit)
+    updateAbnormalityCard(patch, unit)
   } else if (currentResult.is_3d) {
     // Whole Part Overview mode
-    let worstPatch = null
-    let maxVal = -1
-    if (currentResult.patches && currentResult.patches.length > 0) {
-      currentResult.patches.forEach(p => {
-        if (typeof p.svr_um === 'number' && p.svr_um > maxVal) {
-          maxVal = p.svr_um
-          worstPatch = p
-        }
-      })
-    }
-    if (kpiSvr) kpiSvr.textContent = formatValNum(currentResult.worst_svr_um || (worstPatch ? worstPatch.svr_um : 0), unit)
+    const worstPatch = getWorstPatch(currentResult)
     if (secVal1) secVal1.textContent = worstPatch ? formatVal(worstPatch.sa_um, unit) : '-'
     if (secVal2) secVal2.textContent = worstPatch ? formatVal(worstPatch.sq_um, unit) : '-'
     if (secVal3) secVal3.textContent = formatVal(currentResult.worst_svr_um || (worstPatch ? worstPatch.svr_um : 0), unit)
     if (secVal4) secVal4.textContent = formatVal(currentResult.mean_svr_um || 0, unit)
+    updateAbnormalityCard(worstPatch || currentResult, unit)
   } else {
     // Single Surface mode
-    if (kpiSvr) kpiSvr.textContent = formatValNum(currentResult.svr_um, unit)
     if (secVal1) secVal1.textContent = formatVal(currentResult.sa_um, unit)
     if (secVal2) secVal2.textContent = formatVal(currentResult.sq_um, unit)
+    updateAbnormalityCard(currentResult, unit)
   }
 
   // 3. Update Svr in the Faces Table (if present) without re-rendering rows
@@ -2291,6 +2539,22 @@ document.querySelectorAll('#z-scale-stops .z-scale-stop').forEach(btn => {
       currentResult._extractedSurface = null
       updateActiveChart()
     }
+  })
+  btn.addEventListener('keydown', e => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault()
+      btn.click()
+    }
+  })
+})
+
+// Abnormality View HUD segmented control [ All | Without | Abnormalities ]
+document.querySelectorAll('#abn-view-stops .abn-view-stop').forEach(btn => {
+  btn.addEventListener('click', e => {
+    e.preventDefault()
+    e.stopPropagation()
+    const mode = btn.getAttribute('data-mode') || 'all'
+    setAbnormalityMode(mode)
   })
   btn.addEventListener('keydown', e => {
     if (e.key === 'Enter' || e.key === ' ') {

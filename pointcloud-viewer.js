@@ -30,6 +30,7 @@ class PointCloudViewer {
     this.activePatchIndex = 0
     this.showUnassigned = true
     this.showHeatmap = true
+    this.abnormalityMode = 0.0
 
     // Camera & Orbit state (supports smooth inertia damping)
     this.target = [0, 0, 0]
@@ -65,6 +66,7 @@ class PointCloudViewer {
       attribute vec3 aColor;
       attribute float aPatchIndex;
       attribute float aSvr;
+      attribute float aIsAbnormal;
 
       uniform mat4 uMVP;
       uniform float uPointSize;
@@ -74,6 +76,7 @@ class PointCloudViewer {
       uniform float uSvrMin;
       uniform float uSvrMax;
       uniform float uColormapType; // 0 = Viridis, 1 = Jet, 2 = Plasma, 3 = Inferno
+      uniform float uAbnormalityMode; // 0 = all, 1 = without abnormalities, 2 = just abnormalities
 
       varying vec3 vColor;
 
@@ -125,7 +128,7 @@ class PointCloudViewer {
         bool isInvalidOfActive = (aPatchIndex < -9.5 && (abs(aPatchIndex + 10.0 + uActivePatchIndex) < 0.1 || uActivePatchIndex < 0.0));
         bool isGlobalUnassigned = (aPatchIndex < -1.5 && aPatchIndex > -9.5);
 
-        if ((isInvalidOfActive || isGlobalUnassigned) && uShowUnassigned < 0.5) {
+        if ((isInvalidOfActive || isGlobalUnassigned) && (uShowUnassigned < 0.5 || uAbnormalityMode > 1.5)) {
           gl_Position = vec4(2.0, 2.0, 2.0, 0.0);
           gl_PointSize = 0.0;
           vColor = vec3(0.0);
@@ -157,6 +160,19 @@ class PointCloudViewer {
           baseColor = aColor;
         }
 
+        // Abnormality view filtering (0 = all, 1 = without [greyed], 2 = only [normal ghosted])
+        float pointScale = 1.0;
+        if (uAbnormalityMode > 0.5 && uAbnormalityMode < 1.5) {
+          if (aIsAbnormal > 0.5) {
+            baseColor = vec3(0.48, 0.52, 0.58);
+          }
+        } else if (uAbnormalityMode > 1.5) {
+          if (aIsAbnormal <= 0.5) {
+            baseColor = vec3(0.32, 0.35, 0.40);
+            pointScale = 0.85;
+          }
+        }
+
         // When a specific face is selected, subtly de-emphasize other faces
         if (!isOverview && !isSelf && !isInvalidOfActive) {
           vColor = mix(baseColor, vec3(0.35, 0.38, 0.44), 0.65);
@@ -165,7 +181,7 @@ class PointCloudViewer {
         }
 
         gl_Position = uMVP * vec4(aPosition, 1.0);
-        gl_PointSize = uPointSize;
+        gl_PointSize = uPointSize * pointScale;
       }
     `
 
@@ -195,7 +211,8 @@ class PointCloudViewer {
       position: gl.getAttribLocation(program, 'aPosition'),
       color: gl.getAttribLocation(program, 'aColor'),
       patchIndex: gl.getAttribLocation(program, 'aPatchIndex'),
-      svr: gl.getAttribLocation(program, 'aSvr')
+      svr: gl.getAttribLocation(program, 'aSvr'),
+      isAbnormal: gl.getAttribLocation(program, 'aIsAbnormal')
     }
 
     this.uniforms = {
@@ -206,7 +223,8 @@ class PointCloudViewer {
       showHeatmap: gl.getUniformLocation(program, 'uShowHeatmap'),
       svrMin: gl.getUniformLocation(program, 'uSvrMin'),
       svrMax: gl.getUniformLocation(program, 'uSvrMax'),
-      colormapType: gl.getUniformLocation(program, 'uColormapType')
+      colormapType: gl.getUniformLocation(program, 'uColormapType'),
+      abnormalityMode: gl.getUniformLocation(program, 'uAbnormalityMode')
     }
 
     // Hardware depth testing setup: Ensures nearest faces strictly occlude farther faces!
@@ -220,6 +238,7 @@ class PointCloudViewer {
     this.colorBuffer = gl.createBuffer()
     this.patchBuffer = gl.createBuffer()
     this.svrBuffer = gl.createBuffer()
+    this.abnormalBuffer = gl.createBuffer()
   }
 
   compileShader (type, source) {
@@ -238,6 +257,7 @@ class PointCloudViewer {
   setData (result) {
     if (!result) return
     this.lastResult = result
+    this.abnormalityMode = 0.0
     if (!this.gl || this.contextLost) return
     const gl = this.gl
 
@@ -256,6 +276,7 @@ class PointCloudViewer {
     let allCol = []
     let allPatch = []
     let allSvr = []
+    let allAbnormal = []
     this.facesMeta = []
 
     if (result.is_3d && result.patches && result.patches.length > 0) {
@@ -277,6 +298,11 @@ class PointCloudViewer {
         const rgb = FACE_PALETTE_RGB[idx % FACE_PALETTE_RGB.length]
         const colors = new Float32Array(ptCount * 3)
         const patches = new Float32Array(ptCount)
+        const abnF32 = new Float32Array(ptCount)
+        let abn = patch.sample_abnormal || null
+        if (abn && abn.length === ptCount) {
+          for (let i = 0; i < ptCount; i++) abnF32[i] = abn[i] ? 1.0 : 0.0
+        }
         for (let i = 0; i < ptCount; i++) {
           colors[i * 3] = rgb[0]
           colors[i * 3 + 1] = rgb[1]
@@ -312,6 +338,7 @@ class PointCloudViewer {
         allCol.push(colors)
         allPatch.push(patches)
         allSvr.push(svrs)
+        allAbnormal.push(abnF32)
 
         // Invalid / peeled edge points belonging specifically to this face
         let invF32 = patch.invalid_points || patch.invalid_points_f32 || null
@@ -340,6 +367,7 @@ class PointCloudViewer {
           allCol.push(invColors)
           allPatch.push(invPatches)
           allSvr.push(invSvrs)
+          allAbnormal.push(new Float32Array(invCount))
         }
 
         let centroid = patch.centroid
@@ -352,10 +380,18 @@ class PointCloudViewer {
           centroid = [sx / pts.length, sy / pts.length, sz / pts.length]
         }
 
+        const pickStep = Math.max(1, Math.floor(ptCount / 60))
+        const pickPoints = []
+        for (let pIdx = 0; pIdx < ptCount; pIdx += pickStep) {
+          pickPoints.push([f32[pIdx * 3], f32[pIdx * 3 + 1], f32[pIdx * 3 + 2]])
+        }
+        if (centroid) pickPoints.push(centroid)
+
         this.facesMeta.push({
           patchId: patch.patch_id || idx + 1,
           name: patch.name || `Face ${idx + 1}`,
           centroid: centroid || [0, 0, 0],
+          pickPoints: pickPoints,
           normal: patch.normal || patch.plane_normal || null,
           pointCount: ptCount,
           minSvr: minS,
@@ -398,6 +434,7 @@ class PointCloudViewer {
         allCol.push(uColors)
         allPatch.push(uPatches)
         allSvr.push(uSvrs)
+        allAbnormal.push(new Float32Array(uCount))
       }
     } else {
       // Planar surface scan
@@ -416,6 +453,11 @@ class PointCloudViewer {
         const ptCount = f32.length / 3
         const colors = new Float32Array(ptCount * 3)
         const patches = new Float32Array(ptCount)
+        const abnF32 = new Float32Array(ptCount)
+        let abn = result.sample_abnormal || null
+        if (abn && abn.length === ptCount) {
+          for (let i = 0; i < ptCount; i++) abnF32[i] = abn[i] ? 1.0 : 0.0
+        }
         let svrs = result.sample_svr || result.sample_svr_f32 || null
         let minS = Infinity, maxS = -Infinity
         if (svrs && svrs.length > 0) {
@@ -457,6 +499,7 @@ class PointCloudViewer {
         allCol.push(colors)
         allPatch.push(patches)
         allSvr.push(svrs)
+        allAbnormal.push(abnF32)
 
         let centroid = result.plane_centroid || [0, 0, 0]
         let normal = result.plane_normal || [0, 0, 1]
@@ -484,6 +527,7 @@ class PointCloudViewer {
     const mergedCol = new Float32Array(totalLen)
     const mergedPatch = new Float32Array(totalLen / 3)
     const mergedSvr = new Float32Array(totalLen / 3)
+    const mergedAbnormal = new Float32Array(totalLen / 3)
 
     let offsetPos = 0
     let offsetPatch = 0
@@ -492,6 +536,7 @@ class PointCloudViewer {
       mergedCol.set(allCol[i], offsetPos)
       mergedPatch.set(allPatch[i], offsetPatch)
       if (allSvr[i]) mergedSvr.set(allSvr[i], offsetPatch)
+      if (allAbnormal[i]) mergedAbnormal.set(allAbnormal[i], offsetPatch)
       offsetPos += allPos[i].length
       offsetPatch += allPatch[i].length
     }
@@ -510,6 +555,9 @@ class PointCloudViewer {
 
     gl.bindBuffer(gl.ARRAY_BUFFER, this.svrBuffer)
     gl.bufferData(gl.ARRAY_BUFFER, mergedSvr, gl.STATIC_DRAW)
+
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.abnormalBuffer)
+    gl.bufferData(gl.ARRAY_BUFFER, mergedAbnormal, gl.STATIC_DRAW)
 
     // Compute bounding box and auto-center camera
     let minX = Infinity, minY = Infinity, minZ = Infinity
@@ -891,9 +939,9 @@ class PointCloudViewer {
       } catch (err) {}
 
       const dist = Math.hypot(e.clientX - startX, e.clientY - startY)
-      if (dist < 4 && this.onFaceClick && this.facesMeta.length > 1) {
+      if (dist < 6 && this.onFaceClick && this.facesMeta.length > 0) {
         this.handleClick(e)
-      } else if (dist >= 4) {
+      } else if (dist >= 6) {
         if (this.onCameraUserInteraction) this.onCameraUserInteraction()
         if (dragMode === 0) {
           // Momentum velocity handoff with critical damping decay
@@ -947,7 +995,6 @@ class PointCloudViewer {
     const w = this.canvas.clientWidth
     const h = this.canvas.clientHeight
 
-    // Project each face centroid to screen coordinates
     let bestIdx = -1
     let bestDist = Infinity
 
@@ -959,14 +1006,19 @@ class PointCloudViewer {
         const toEyeY = this.lastEye[1] - c[1]
         const toEyeZ = this.lastEye[2] - c[2]
         const dot = meta.normal[0] * toEyeX + meta.normal[1] * toEyeY + meta.normal[2] * toEyeZ
-        if (dot < 0) return
+        if (dot < -0.05) return
       }
-      const v = this.project(c, this.lastMVP, w, h)
-      if (v && v.z > 0 && v.z < 1) {
-        const d = Math.hypot(v.x - mouseX, v.y - mouseY)
-        if (d < bestDist && d < 120) {
-          bestDist = d
-          bestIdx = idx
+
+      // Check distance across all distributed face pickPoints
+      const testPts = (meta.pickPoints && meta.pickPoints.length > 0) ? meta.pickPoints : [c]
+      for (let i = 0; i < testPts.length; i++) {
+        const v = this.project(testPts[i], this.lastMVP, w, h)
+        if (v && v.z > 0 && v.z < 1) {
+          const d = Math.hypot(v.x - mouseX, v.y - mouseY)
+          if (d < bestDist && d < 120) {
+            bestDist = d
+            bestIdx = idx
+          }
         }
       }
     })
@@ -1079,6 +1131,9 @@ class PointCloudViewer {
     if (this.uniforms.colormapType) {
       gl.uniform1f(this.uniforms.colormapType, this.colormapType !== undefined ? this.colormapType : 1.0)
     }
+    if (this.uniforms.abnormalityMode) {
+      gl.uniform1f(this.uniforms.abnormalityMode, this.abnormalityMode !== undefined ? this.abnormalityMode : 0.0)
+    }
 
     // Bind Buffers
     gl.bindBuffer(gl.ARRAY_BUFFER, this.posBuffer)
@@ -1099,8 +1154,23 @@ class PointCloudViewer {
       gl.vertexAttribPointer(this.attribs.svr, 1, gl.FLOAT, false, 0, 0)
     }
 
+    if (this.attribs.isAbnormal >= 0 && this.abnormalBuffer) {
+      gl.bindBuffer(gl.ARRAY_BUFFER, this.abnormalBuffer)
+      gl.enableVertexAttribArray(this.attribs.isAbnormal)
+      gl.vertexAttribPointer(this.attribs.isAbnormal, 1, gl.FLOAT, false, 0, 0)
+    }
+
     // Fast Single GPU Draw Call for ALL raw points!
     gl.drawArrays(gl.POINTS, 0, this.totalPoints)
+  }
+
+  setAbnormalityMode (mode) {
+    let m = 0.0
+    if (typeof mode === 'number') m = mode
+    else if (mode === 'filtered' || mode === 'without') m = 1.0
+    else if (mode === 'only') m = 2.0
+    this.abnormalityMode = m
+    this.requestRender()
   }
 
   perspective (fovRad, aspect, near, far) {
