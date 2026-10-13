@@ -30,7 +30,7 @@
   --border-subtle: #282b35;
   --border-medium: #353946;
   --border-strong: #464c5d;
-  --border-highlight: #3b82f6;
+  --border-highlight: #4a729e;
 
   /* Technical High-Contrast Text */
   --text-primary: #f3f4f6;
@@ -38,14 +38,15 @@
   --text-muted: #6b7280;
   --text-faint: #4b5563;
 
-  /* Functional Accents */
-  --accent-primary: #d32f2f;
-  --accent-primary-hover: #b71c1c;
-  --accent-primary-subtle: rgba(211, 47, 47, 0.15);
+  /* Functional Accents — Subdued Slate Steel */
+  --accent-primary: #2a3a4d;
+  --accent-primary-hover: #34475e;
+  --accent-primary-border: #455d7a;
+  --accent-primary-subtle: rgba(42, 58, 77, 0.3);
 
-  --accent-blue: #3b82f6;
-  --accent-blue-hover: #2563eb;
-  --accent-blue-subtle: rgba(59, 130, 246, 0.15);
+  --accent-blue: #4a729e;
+  --accent-blue-hover: #3b5e84;
+  --accent-blue-subtle: rgba(74, 114, 158, 0.18);
 
   /* Status Badges */
   --badge-bg: #282b36;
@@ -82,20 +83,21 @@
   --border-subtle: #d3d9e3;
   --border-medium: #b9c2d0;
   --border-strong: #96a2b5;
-  --border-highlight: #2563eb;
+  --border-highlight: #3b5e84;
 
   --text-primary: #111827;
   --text-secondary: #4b5563;
   --text-muted: #6b7280;
   --text-faint: #9ca3af;
 
-  --accent-primary: #c8102e;
-  --accent-primary-hover: #a30d25;
-  --accent-primary-subtle: rgba(200, 16, 46, 0.1);
+  --accent-primary: #2b3d52;
+  --accent-primary-hover: #1f2c3b;
+  --accent-primary-border: #3b526e;
+  --accent-primary-subtle: rgba(43, 61, 82, 0.12);
 
-  --accent-blue: #2563eb;
-  --accent-blue-hover: #1d4ed8;
-  --accent-blue-subtle: rgba(37, 99, 235, 0.1);
+  --accent-blue: #3b5e84;
+  --accent-blue-hover: #2e4a69;
+  --accent-blue-subtle: rgba(59, 94, 132, 0.12);
 
   --badge-bg: #e5e9f0;
   --badge-text: #1f2937;
@@ -424,13 +426,14 @@ html, body {
 
 .btn-primary {
   background-color: var(--accent-primary);
-  color: #ffffff;
-  border-color: var(--accent-primary);
+  color: #f3f4f6;
+  border-color: var(--accent-primary-border, var(--accent-primary));
 }
 
 .btn-primary:hover {
   background-color: var(--accent-primary-hover);
-  border-color: var(--accent-primary-hover);
+  border-color: var(--accent-primary-border, var(--accent-primary-hover));
+  color: #ffffff;
 }
 
 .btn-secondary {
@@ -1676,8 +1679,8 @@ input[type="number"] {
 }
 
 .row-inspect-btn:hover {
-  background-color: var(--accent);
-  border-color: var(--accent);
+  background-color: var(--accent-primary);
+  border-color: var(--accent-primary);
   color: #ffffff;
 }
 
@@ -1688,8 +1691,8 @@ input[type="number"] {
 }
 
 .active-row .row-inspect-btn:hover {
-  background-color: var(--accent);
-  border-color: var(--accent);
+  background-color: var(--accent-primary);
+  border-color: var(--accent-primary);
   color: #ffffff;
 }
 

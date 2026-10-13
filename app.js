@@ -197,6 +197,8 @@ function setProcessingUploadVisibility (isProcessing, fileName) {
     if (downloadBtnEl) downloadBtnEl.disabled = true
     if (loadingOverlay) loadingOverlay.style.display = 'flex'
     if (loadingText) loadingText.textContent = fileName ? `Processing ${fileName}...` : 'Computing Metrology Surface...'
+    const dockEl = document.getElementById('bottom-dock')
+    if (dockEl) dockEl.style.display = 'none'
   } else {
     if (openScanBtn) openScanBtn.style.display = 'inline-flex'
     if (fileInputEl) fileInputEl.disabled = false
@@ -212,8 +214,10 @@ function setProcessingUploadVisibility (isProcessing, fileName) {
       downloadBtnEl.disabled = !currentResult
     }
     if (loadingOverlay) loadingOverlay.style.display = 'none'
-    if (!currentResult && emptyStateEl) {
-      emptyStateEl.style.display = 'flex'
+    if (!currentResult) {
+      if (emptyStateEl) emptyStateEl.style.display = 'flex'
+      const dockEl = document.getElementById('bottom-dock')
+      if (dockEl) dockEl.style.display = 'none'
     }
   }
 }
@@ -534,7 +538,9 @@ function renderResults (res) {
   const hudEl = document.getElementById('viewport-hud')
   if (hudEl) hudEl.style.display = 'flex'
   const dockEl = document.getElementById('bottom-dock')
-  if (dockEl) dockEl.style.display = 'flex'
+  const hasReport = !!(res && res.report_text && res.report_text.trim())
+  const hasFaces = !!(res && res.is_3d && res.patches && res.patches.length > 1)
+  if (dockEl) dockEl.style.display = (hasReport || hasFaces) ? 'flex' : 'none'
   const exportBtnEl = document.getElementById('export-btn')
   if (exportBtnEl) exportBtnEl.disabled = false
 
@@ -574,7 +580,9 @@ function render3DFaces (res) {
     tabBtnFaces.style.display = 'inline-block'
     tabBtnFaces.textContent = `Faces (${patchCount})`
   }
+  const hasReport = !!(res && res.report_text && res.report_text.trim())
   if (tabBtnRep) {
+    tabBtnRep.style.display = hasReport ? 'inline-block' : 'none'
     tabBtnRep.textContent = 'Metrology Report'
   }
 
@@ -930,14 +938,26 @@ function renderSingleSurface (res) {
     tabFacesContent.classList.remove('active')
   }
 
+  const hasReport = !!(res && res.report_text && res.report_text.trim())
   if (tabBtnRep) {
-    tabBtnRep.style.display = 'inline-block'
+    tabBtnRep.style.display = hasReport ? 'inline-block' : 'none'
     tabBtnRep.textContent = 'Metrology Report'
-    tabBtnRep.classList.add('active')
+    if (hasReport) {
+      tabBtnRep.classList.add('active')
+    } else {
+      tabBtnRep.classList.remove('active')
+    }
   }
   const tabRepContent = document.getElementById('tab-rep')
   if (tabRepContent) {
-    tabRepContent.classList.add('active')
+    if (hasReport) {
+      tabRepContent.classList.add('active')
+    } else {
+      tabRepContent.classList.remove('active')
+    }
+  }
+  if (!hasReport && dockEl) {
+    dockEl.style.display = 'none'
   }
 
   if (facesTbody) {
