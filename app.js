@@ -1390,6 +1390,21 @@ function renderShapeMiniPreview () {
   ctx.restore()
 }
 
+function rotateGrid90CW (grid, numRows, numCols) {
+  const newRows = numCols
+  const newCols = numRows
+  const res = new Array(newRows)
+  for (let r = 0; r < newRows; r++) {
+    const newRow = new Array(newCols)
+    for (let c = 0; c < newCols; c++) {
+      const srcRow = grid[c]
+      newRow[c] = (srcRow && srcRow[numCols - 1 - r] !== undefined) ? srcRow[numCols - 1 - r] : null
+    }
+    res[r] = newRow
+  }
+  return res
+}
+
 function ensureGrid2D (target) {
   if (!target) return
   if ((!target.grid_svr || !Array.isArray(target.grid_svr)) && target.grid_svr_f32 && target.grid_width && target.grid_height) {
@@ -1423,6 +1438,44 @@ function ensureGrid2D (target) {
       grid[r] = row
     }
     target.grid_z = grid
+  }
+
+  // Orient rectangular samples width-ways (landscape) by default
+  const baseGrid = (target.grid_svr && Array.isArray(target.grid_svr) && target.grid_svr.length > 0)
+    ? target.grid_svr
+    : (target.grid_z && Array.isArray(target.grid_z) && target.grid_z.length > 0 ? target.grid_z : null)
+
+  if (!target._gridRotated && baseGrid) {
+    const h = baseGrid.length
+    const w = baseGrid[0] ? baseGrid[0].length : 0
+    if (h > w && w > 0) {
+      target._gridRotated = true
+      if (target.grid_svr && Array.isArray(target.grid_svr) && target.grid_svr.length === h) {
+        target.grid_svr = rotateGrid90CW(target.grid_svr, h, w)
+      }
+      if (target.grid_z && Array.isArray(target.grid_z) && target.grid_z.length === h) {
+        target.grid_z = rotateGrid90CW(target.grid_z, h, w)
+      }
+      if (target.grid_abnormal_mask && Array.isArray(target.grid_abnormal_mask) && target.grid_abnormal_mask.length === h) {
+        target.grid_abnormal_mask = rotateGrid90CW(target.grid_abnormal_mask, h, w)
+      }
+      target.grid_width = h
+      target.grid_height = w
+      const pitch = typeof target.pitch_mm === 'number'
+        ? target.pitch_mm
+        : (typeof target.grid_z_pitch_mm === 'number' ? target.grid_z_pitch_mm : 0.2)
+      target.origin_x = -((h - 1) * pitch) / 2
+      target.origin_y = -((w - 1) * pitch) / 2
+      if (typeof target.patch_width_mm === 'number' && typeof target.patch_height_mm === 'number') {
+        const pw = target.patch_width_mm
+        const ph = target.patch_height_mm
+        target.patch_width_mm = Math.max(pw, ph)
+        target.patch_height_mm = Math.min(pw, ph)
+      }
+      if (target.invalid_points_local && Array.isArray(target.invalid_points_local)) {
+        target.invalid_points_local = target.invalid_points_local.map(pt => [pt[1], -pt[0], pt[2]])
+      }
+    }
   }
 }
 
@@ -1561,6 +1614,24 @@ function getCurrentPlotlyCamera (container) {
   return null
 }
 
+function computeFitScale (aspectY, contWidth, contHeight, targetFill = 0.80) {
+  const w = contWidth || 900
+  const h = contHeight || 600
+  const contAspect = w / Math.max(1, h)
+  const base = 2.1 * targetFill
+  const scale = base * Math.min(contAspect, 1.0 / Math.max(0.1, aspectY))
+  return +(Math.max(0.8, Math.min(3.2, scale))).toFixed(3)
+}
+
+function computeFitEyeDistance (aspectY, contWidth, contHeight, targetFill = 0.84) {
+  const w = contWidth || 900
+  const h = contHeight || 600
+  const ar = w / Math.max(1, h)
+  const distW = ar >= 1 ? (1.0 / (2 * targetFill * ar)) : (1.0 / (2 * targetFill))
+  const distH = ar >= 1 ? (aspectY / (2 * targetFill)) : ((aspectY * ar) / (2 * targetFill))
+  return +(Math.max(0.3, Math.min(2.0, Math.max(distW, distH)))).toFixed(4)
+}
+
 function render3DSurface (target) {
   if (!target) return
 
@@ -1598,13 +1669,6 @@ function render3DSurface (target) {
   else if (currentZExaggeration === 50) aspectZ = 0.44
   else aspectZ = Math.max(0.02, Math.min(0.6, 0.24 * (currentZExaggeration / 25.0)))
 
-  const aerialCamera = {
-    eye: { x: 0.0, y: 0.0001, z: 2.1 },
-    up: { x: 0.0, y: 1.0, z: 0.0 },
-    center: { x: 0, y: 0, z: 0 },
-    projection: { type: 'orthographic' }
-  }
-
   // Fill card vertically on 1st visit by matching right KPI card
   const kpiCardElem = document.getElementById('kpi-card')
   const chartCardElem = document.querySelector('.chart-card')
@@ -1619,9 +1683,31 @@ function render3DSurface (target) {
     chartContainerElem.style.height = `${targetHeight}px`
   }
 
+  const contW = (chartCardElem && chartCardElem.clientWidth) || (chartContainerElem && chartContainerElem.clientWidth) || 900
+  const contH = (chartContainerElem && chartContainerElem.clientHeight) || (chartCardElem && chartCardElem.clientHeight) || targetHeight || 600
+  const fitScale = computeFitScale(aspectY, contW, contH)
+  const fitEyeZ = computeFitEyeDistance(aspectY, contW, contH)
+
+  const aerialCamera = {
+    eye: { x: 0.0, y: 0.0001, z: fitEyeZ },
+    up: { x: 0.0, y: 1.0, z: 0.0 },
+    center: { x: 0, y: 0, z: 0 },
+    projection: { type: 'orthographic' }
+  }
+
+  const defaultAspectratio = {
+    x: fitScale,
+    y: +(aspectY * fitScale).toFixed(3),
+    z: +(aspectZ * fitScale).toFixed(3)
+  }
+
+  const scanId = currentResult
+    ? (currentResult.effective_name || (selectedFile ? selectedFile.name : '') || currentAnalysisId)
+    : currentAnalysisId
   const currentFaceKey = (currentResult && currentResult.is_3d && activePatchIndex >= 0)
     ? `patch_${activePatchIndex}`
     : 'single_surface'
+  const sceneRevisionKey = `${scanId}_${currentAnalysisId}_${currentFaceKey}`
 
   // Preserve user camera orientation across actions on this face
   if (lastRenderedFaceKey && chartContainerElem) {
@@ -1645,12 +1731,12 @@ function render3DSurface (target) {
   const layout = {
     autosize: true,
     height: targetHeight,
-    margin: { l: 40, r: 40, t: 30, b: 40 },
+    margin: { l: 20, r: 20, t: 20, b: 20 },
     hovermode: 'closest',
     hoverdistance: 3,
-    uirevision: currentFaceKey,
+    uirevision: sceneRevisionKey,
     scene: {
-      uirevision: currentFaceKey,
+      uirevision: sceneRevisionKey,
       xaxis: {
         title: { text: 'X (mm)', font: { size: 11, color: chartText } },
         color: chartText,
@@ -1685,7 +1771,7 @@ function render3DSurface (target) {
         showspikes: false
       },
       aspectmode: 'manual',
-      aspectratio: { x: 1, y: aspectY, z: aspectZ },
+      aspectratio: defaultAspectratio,
       camera: cameraToUse
     },
     plot_bgcolor: chartBg,
@@ -1884,6 +1970,12 @@ function render3DSurface (target) {
   Plotly.react('chart-container', traces, layout, config).then(() => {
     Plotly.Plots.resize('chart-container')
     updateAllViewColorbar()
+    if (!surfaceCameraMap.has(currentFaceKey)) {
+      Plotly.relayout('chart-container', {
+        'scene.camera': cameraToUse,
+        'scene.aspectratio': defaultAspectratio
+      })
+    }
     const overlay = document.getElementById('chart-loading-overlay')
     if (overlay) overlay.style.display = 'none'
 
@@ -2092,154 +2184,273 @@ function updatePointCloudMarkerSizes () {
 }
 
 
-function renderHeatmap (res) {
-  if (res) ensureGrid2D(res)
-  if (
-    !res ||
-    !res.grid_svr ||
-    !Array.isArray(res.grid_svr) ||
-    res.grid_svr.length === 0
-  ) {
-    console.warn('renderHeatmap: No grid_svr data provided in results', res)
+function exportScientificHeatmap (target, baseName) {
+  if (!target || !window.Plotly) return
+  ensureGrid2D(target)
+
+  const rawGrid = (target.grid_svr && Array.isArray(target.grid_svr) && target.grid_svr.length > 0)
+    ? target.grid_svr
+    : (target.grid_z && Array.isArray(target.grid_z) ? target.grid_z : null)
+
+  if (!rawGrid || rawGrid.length === 0 || !rawGrid[0] || rawGrid[0].length === 0) {
+    const chartElem = document.getElementById('chart-container')
+    if (chartElem) {
+      Plotly.toImage(chartElem, { format: 'png', width: 2000, height: 1500, scale: 2 })
+        .then(url => downloadDataUri(url, `${baseName}_topography.png`))
+    }
     return
   }
+
   const unit = unitSelect ? unitSelect.value : 'µm'
-  const grid = res.grid_svr
   const robust = robustCheckbox ? robustCheckbox.checked : false
   const palette = paletteSelect ? paletteSelect.value : 'Viridis'
 
-  const originX = typeof res.origin_x === 'number' ? res.origin_x : 0
-  const originY = typeof res.origin_y === 'number' ? res.origin_y : 0
-  const pitch = typeof res.pitch_mm === 'number' ? res.pitch_mm : 0.2
+  const numRows = rawGrid.length
+  const numCols = rawGrid[0].length
+  const pitch = typeof target.pitch_mm === 'number'
+    ? target.pitch_mm
+    : (typeof target.grid_z_pitch_mm === 'number' ? target.grid_z_pitch_mm : 0.2)
 
-  // Flatten and filter for percentiles
-  let flat = []
-  for (let r = 0; r < grid.length; r++) {
-    for (let c = 0; c < grid[r].length; c++) {
-      let v = grid[r][c]
-      if (typeof v === 'number' && !isNaN(v)) {
-        if (unit === 'mm') v /= 1000.0
-        else if (unit === 'in') v /= 25400.0
-        flat.push(v)
+  const abnMask = target.grid_abnormal_mask
+  const isFiltered = (currentAbnormalityMode === 'filtered' || currentAbnormalityMode === 'without')
+  const isOnlyAbn = (currentAbnormalityMode === 'only')
+
+  let unitDivisor = 1.0
+  if (unit === 'mm') unitDivisor = 1000.0
+  else if (unit === 'in') unitDivisor = 25400.0
+
+  const flatValues = []
+  const zData = new Array(numRows)
+
+  for (let r = 0; r < numRows; r++) {
+    const rowSrc = rawGrid[r]
+    const rowDst = new Array(numCols)
+    for (let c = 0; c < numCols; c++) {
+      const val = rowSrc ? rowSrc[c] : null
+      if (typeof val === 'number' && !isNaN(val)) {
+        const isAbn = Boolean(abnMask && abnMask[r] && abnMask[r][c])
+        if (isFiltered && isAbn) {
+          rowDst[c] = null
+        } else if (isOnlyAbn && !isAbn) {
+          rowDst[c] = null
+        } else {
+          const converted = val / unitDivisor
+          rowDst[c] = converted
+          flatValues.push(converted)
+        }
+      } else {
+        rowDst[c] = null
       }
     }
-  }
-  flat.sort((a, b) => a - b)
-
-  let zmin = flat.length > 0 ? flat[0] : 0
-  let zmax = flat.length > 0 ? flat[flat.length - 1] : 1
-  if (robust && flat.length > 20) {
-    zmin = flat[Math.floor(flat.length * 0.02)]
-    zmax = flat[Math.floor(flat.length * 0.98)]
+    zData[r] = rowDst
   }
 
-  // Convert grid units
-  const zData = grid.map(row =>
-    row.map(v => {
-      if (typeof v !== 'number' || isNaN(v)) return null
-      if (unit === 'mm') return v / 1000.0
-      if (unit === 'in') return v / 25400.0
-      return v
-    })
-  )
+  flatValues.sort((a, b) => a - b)
+  let cmin = flatValues.length > 0 ? flatValues[0] : 0
+  let cmax = flatValues.length > 0 ? flatValues[flatValues.length - 1] : 1
+  if (robust && flatValues.length > 20) {
+    cmin = flatValues[Math.floor(flatValues.length * 0.02)]
+    cmax = flatValues[Math.floor(flatValues.length * 0.98)]
+  }
+  if (cmax <= cmin) cmax = cmin + 1.0
 
-  const numCols = res.grid_width || (grid[0] ? grid[0].length : 0)
-  const numRows = res.grid_height || grid.length
+  const spanX = Math.max(0.1, (numCols - 1) * pitch)
+  const spanY = Math.max(0.1, (numRows - 1) * pitch)
 
-  const xCoords = []
-  for (let c = 0; c < numCols; c++) xCoords.push(originX + c * pitch)
-  const yCoords = []
-  for (let r = 0; r < numRows; r++) yCoords.push(originY + r * pitch)
+  let finalZ = zData
+  let finalCols = numCols
+  let finalRows = numRows
 
-  const isDark = getTheme() === 'dark'
-  const chartBg = isDark ? '#1c1d22' : '#ffffff'
-  const chartText = isDark ? '#c7cbd3' : '#0f172a'
-  const tickColor = isDark ? '#8e94a0' : '#475569'
+  // If rectangular sample is taller than wide, rotate 90° clockwise to orient width-ways (landscape)
+  if (spanY > spanX) {
+    finalCols = numRows
+    finalRows = numCols
+    finalZ = new Array(finalRows)
+    for (let r = 0; r < finalRows; r++) {
+      const newRow = new Array(finalCols)
+      for (let c = 0; c < finalCols; c++) {
+        newRow[c] = zData[c][numCols - 1 - r]
+      }
+      finalZ[r] = newRow
+    }
+  }
 
-  const showHeatmap = showHeatmapCheckbox ? showHeatmapCheckbox.checked : true
-  const faceColor = FACE_PALETTE[activePatchIndex >= 0 ? (activePatchIndex % FACE_PALETTE.length) : 0]
+  const xCoords = new Array(finalCols)
+  for (let c = 0; c < finalCols; c++) xCoords[c] = +(c * pitch).toFixed(3)
+  const yCoords = new Array(finalRows)
+  for (let r = 0; r < finalRows; r++) yCoords[r] = +(r * pitch).toFixed(3)
+
+  const patchName = target.name || (activePatchIndex >= 0 ? `Face ${activePatchIndex + 1}` : '')
+  const titleText = patchName ? `${baseName} — ${patchName}` : baseName
+
+  const meta = []
+  const svrVal = (isFiltered && typeof target.svr_clean_um === 'number')
+    ? target.svr_clean_um
+    : target.svr_um
+  if (typeof svrVal === 'number') meta.push(`S<sub>vr</sub> = ${(svrVal / unitDivisor).toFixed(1)} ${unit}`)
+  if (typeof target.sa_um === 'number') meta.push(`S<sub>a</sub> = ${(target.sa_um / unitDivisor).toFixed(1)} ${unit}`)
+  if (typeof target.sq_um === 'number') meta.push(`S<sub>q</sub> = ${(target.sq_um / unitDivisor).toFixed(1)} ${unit}`)
+  meta.push(`Pitch = ${pitch.toFixed(2)} mm`)
+  if (isFiltered) meta.push('Filtered')
+  else if (isOnlyAbn) meta.push('Abnormalities Only')
 
   const trace = {
-    z: zData,
+    type: 'heatmap',
+    z: finalZ,
     x: xCoords,
     y: yCoords,
-    type: 'heatmap',
-    colorscale: showHeatmap ? palette : [[0, faceColor], [1, faceColor]],
-    zmin: zmin,
-    zmax: zmax,
+    colorscale: palette,
+    zmin: cmin,
+    zmax: cmax,
     zsmooth: false,
-    showscale: showHeatmap,
-    colorbar: showHeatmap ? {
+    showscale: true,
+    colorbar: {
       title: {
-        text: `Svr (${unit})`,
+        text: `<b>S<sub>vr</sub> (${unit})</b>`,
         side: 'top',
-        font: { size: 11, color: chartText }
+        font: {
+          family: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+          size: 14,
+          color: '#111827'
+        }
       },
-      len: 0.86,
-      thickness: 16,
+      len: 0.92,
+      thickness: 24,
+      outlinewidth: 1.5,
+      outlinecolor: '#111827',
+      tickfont: {
+        family: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+        size: 12,
+        color: '#111827'
+      },
+      tickcolor: '#111827',
+      ticklen: 5,
+      tickwidth: 1.5,
       x: 1.02,
-      xpad: 18,
-      tickfont: { size: 10, color: chartText }
-    } : undefined,
-    hovertemplate: showHeatmap
-      ? `Surface X: %{x:.2f} mm<br>Surface Y: %{y:.2f} mm<br>Local Svr: %{z:${unit === 'µm' ? '.1f' : (unit === 'mm' ? '.3f' : '.4f')}} ${unit}<extra></extra>`
-      : `Surface X: %{x:.2f} mm<br>Surface Y: %{y:.2f} mm<extra></extra>`
-  }
-
-  const unassignedGrey = isDark ? '#334155' : '#cbd5e1'
-  const minX = (xCoords[0] || 0) - pitch * 0.5
-  const maxX = (xCoords[xCoords.length - 1] || 0) + pitch * 0.5
-  const minY = (yCoords[0] || 0) - pitch * 0.5
-  const maxY = (yCoords[yCoords.length - 1] || 0) + pitch * 0.5
-
-  const layout = {
-    autosize: true,
-    margin: { l: 65, r: 85, t: 30, b: 60 },
-    shapes: [
-      {
-        type: 'rect',
-        xref: 'x',
-        yref: 'y',
-        x0: minX,
-        y0: minY,
-        x1: maxX,
-        y1: maxY,
-        fillcolor: unassignedGrey,
-        line: { width: 0 },
-        layer: 'below'
-      }
-    ],
-    xaxis: {
-      title: { text: 'Surface X (mm)', standoff: 15, font: { size: 12, color: chartText } },
-      showgrid: false,
-      color: chartText,
-      tickcolor: tickColor,
-      tickfont: { size: 10, color: chartText },
-      nticks: 8
-    },
-    yaxis: {
-      title: { text: 'Surface Y (mm)', standoff: 15, font: { size: 12, color: chartText } },
-      showgrid: false,
-      scaleanchor: 'x',
-      scaleratio: 1,
-      color: chartText,
-      tickcolor: tickColor,
-      tickfont: { size: 10, color: chartText },
-      nticks: 8
-    },
-    plot_bgcolor: chartBg,
-    paper_bgcolor: chartBg,
-    font: {
-      family:
-        '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
-      color: chartText
+      xpad: 14
     }
   }
 
-  Plotly.react('chart-container', [trace], layout, {
-    responsive: true,
-    displaylogo: false
-  })
+  const finalSpanX = Math.max(0.1, (finalCols - 1) * pitch)
+  const finalSpanY = Math.max(0.1, (finalRows - 1) * pitch)
+  const dataAspect = finalSpanX / finalSpanY
+
+  let figWidth = 1200
+  let figHeight = 900
+  if (dataAspect > 1.8) {
+    figWidth = 1400
+    figHeight = Math.max(650, Math.min(950, Math.round(1400 / (dataAspect * 0.85))))
+  } else {
+    figWidth = 1200
+    figHeight = Math.max(750, Math.min(960, Math.round(1200 / dataAspect)))
+  }
+
+  const layout = {
+    width: figWidth,
+    height: figHeight,
+    paper_bgcolor: '#ffffff',
+    plot_bgcolor: '#f8fafc',
+    margin: { l: 90, r: 120, t: 85, b: 80 },
+    title: {
+      text: `<b>${titleText}</b><br><span style="font-size: 13px; color: #4b5563; font-weight: normal;">${meta.join('   |   ')}</span>`,
+      x: 0.05,
+      xanchor: 'left',
+      y: 0.96,
+      yanchor: 'top',
+      font: {
+        family: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+        size: 18,
+        color: '#111827'
+      }
+    },
+    xaxis: {
+      title: {
+        text: '<b>X (mm)</b>',
+        standoff: 14,
+        font: {
+          family: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+          size: 15,
+          color: '#111827'
+        }
+      },
+      showgrid: false,
+      zeroline: false,
+      showline: true,
+      linewidth: 1.5,
+      linecolor: '#111827',
+      mirror: true,
+      ticks: 'outside',
+      ticklen: 6,
+      tickwidth: 1.5,
+      tickcolor: '#111827',
+      tickfont: {
+        family: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+        size: 13,
+        color: '#111827'
+      }
+    },
+    yaxis: {
+      title: {
+        text: '<b>Y (mm)</b>',
+        standoff: 14,
+        font: {
+          family: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+          size: 15,
+          color: '#111827'
+        }
+      },
+      scaleanchor: 'x',
+      scaleratio: 1,
+      showgrid: false,
+      zeroline: false,
+      showline: true,
+      linewidth: 1.5,
+      linecolor: '#111827',
+      mirror: true,
+      ticks: 'outside',
+      ticklen: 6,
+      tickwidth: 1.5,
+      tickcolor: '#111827',
+      tickfont: {
+        family: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+        size: 13,
+        color: '#111827'
+      }
+    }
+  }
+
+  const offscreen = document.createElement('div')
+  offscreen.style.position = 'fixed'
+  offscreen.style.left = '-9999px'
+  offscreen.style.top = '-9999px'
+  offscreen.style.width = `${figWidth}px`
+  offscreen.style.height = `${figHeight}px`
+  document.body.appendChild(offscreen)
+
+  return Plotly.newPlot(offscreen, [trace], layout, { staticPlot: true, responsive: false })
+    .then(() => {
+      return Plotly.toImage(offscreen, {
+        format: 'png',
+        width: figWidth,
+        height: figHeight,
+        scale: 2
+      })
+    })
+    .then(dataUrl => {
+      const patchSlug = patchName ? `_${patchName.toLowerCase().replace(/[^a-z0-9]+/g, '_')}` : ''
+      downloadDataUri(dataUrl, `${baseName}${patchSlug}_heatmap.png`)
+    })
+    .catch(err => {
+      console.error('Failed to export scientific heatmap figure:', err)
+    })
+    .finally(() => {
+      try {
+        Plotly.purge(offscreen)
+      } catch (e) {}
+      if (offscreen.parentNode) {
+        offscreen.parentNode.removeChild(offscreen)
+      }
+    })
 }
 
 function renderVariogram (target) {
@@ -2994,10 +3205,11 @@ if (exportCsvAction) {
   })
 }
 
+let isExportingPng = false
 const exportPngAction = document.getElementById('export-png-action')
 if (exportPngAction) {
   exportPngAction.addEventListener('click', () => {
-    if (!currentResult) return
+    if (!currentResult || isExportingPng) return
     if (exportPopover) exportPopover.style.display = 'none'
     if (exportBtn) exportBtn.classList.remove('active')
 
@@ -3008,15 +3220,15 @@ if (exportPngAction) {
         downloadDataUri(dataUrl, `${baseName}_3d_model.png`)
       }
     } else {
-      const chartElem = document.getElementById('chart-container')
-      if (window.Plotly && chartElem) {
-        Plotly.toImage(chartElem, { format: 'png', width: 1920, height: 1080 })
-          .then(dataUrl => {
-            downloadDataUri(dataUrl, `${baseName}_topography.png`)
-          })
-          .catch(err => {
-            console.error('Snapshot capture error:', err)
-          })
+      const target = (currentResult.is_3d && currentResult.patches && activePatchIndex >= 0)
+        ? currentResult.patches[activePatchIndex]
+        : currentResult
+      isExportingPng = true
+      const p = exportScientificHeatmap(target, baseName)
+      if (p && typeof p.finally === 'function') {
+        p.finally(() => { isExportingPng = false })
+      } else {
+        setTimeout(() => { isExportingPng = false }, 1200)
       }
     }
   })
@@ -3057,12 +3269,37 @@ if (hudCamReset) {
       surfaceCameraMap.delete(currentFaceKey)
       const chartElem = document.getElementById('chart-container')
       if (window.Plotly && chartElem) {
+        const target = (currentResult && currentResult.is_3d && activePatchIndex >= 0 && currentResult.patches)
+          ? currentResult.patches[activePatchIndex]
+          : currentResult
+        const numRows = target ? (target.grid_height || (target.grid_svr ? target.grid_svr.length : 1)) : 1
+        const numCols = target ? (target.grid_width || (target.grid_svr && target.grid_svr[0] ? target.grid_svr[0].length : 1)) : 1
+        const pitch = target ? (typeof target.pitch_mm === 'number' ? target.pitch_mm : 0.2) : 0.2
+        const xSpan = (numCols > 1 ? (numCols - 1) * pitch : 1)
+        const ySpan = (numRows > 1 ? (numRows - 1) * pitch : 1)
+        const aspectY = Math.max(0.2, Math.min(5.0, ySpan / Math.max(1e-3, xSpan)))
+        let aspectZ = 0.22
+        if (currentZExaggeration === 1) aspectZ = 0.05
+        else if (currentZExaggeration === 10) aspectZ = 0.14
+        else if (currentZExaggeration === 25) aspectZ = 0.24
+        else if (currentZExaggeration === 50) aspectZ = 0.44
+        else aspectZ = Math.max(0.02, Math.min(0.6, 0.24 * (currentZExaggeration / 25.0)))
+        const chartCardElem = document.querySelector('.chart-card')
+        const contW = (chartCardElem && chartCardElem.clientWidth) || chartElem.clientWidth || 900
+        const contH = chartElem.clientHeight || (chartCardElem && chartCardElem.clientHeight) || 600
+        const fitScale = computeFitScale(aspectY, contW, contH)
+        const fitEyeZ = computeFitEyeDistance(aspectY, contW, contH)
         Plotly.relayout(chartElem, {
           'scene.camera': {
-            eye: { x: 0.0, y: 0.0001, z: 2.1 },
+            eye: { x: 0.0, y: 0.0001, z: fitEyeZ },
             up: { x: 0.0, y: 1.0, z: 0.0 },
             center: { x: 0, y: 0, z: 0 },
             projection: { type: 'orthographic' }
+          },
+          'scene.aspectratio': {
+            x: fitScale,
+            y: +(aspectY * fitScale).toFixed(3),
+            z: +(aspectZ * fitScale).toFixed(3)
           }
         })
       }
